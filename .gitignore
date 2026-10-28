@@ -1,0 +1,17 @@
+.env
+**/.env
+!.env.example
+**/target/
+**/.mvn/wrapper/maven-wrapper.jar
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/venv/
+*.py[cod]
+.idea/
+.vscode/
+*.log
+frontend/node_modules/
+frontend/.next/
+agent/.venv/
+backend/target/

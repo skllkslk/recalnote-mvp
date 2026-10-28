@@ -1,0 +1,15 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE app_user (id varchar(100) PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE user_profile (user_id varchar(100) PRIMARY KEY REFERENCES app_user(id), occupation text, interests_json jsonb NOT NULL DEFAULT '[]');
+CREATE TABLE epic (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id varchar(100) NOT NULL REFERENCES app_user(id), title text NOT NULL, completion_criteria text NOT NULL, status varchar(20) NOT NULL DEFAULT 'ACTIVE', created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE record (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id varchar(100) NOT NULL REFERENCES app_user(id), title text NOT NULL, content_markdown text NOT NULL, tags_json jsonb NOT NULL DEFAULT '[]', version integer NOT NULL DEFAULT 1, deleted_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX record_user_updated_idx ON record(user_id, updated_at DESC) WHERE deleted_at IS NULL;
+CREATE TABLE agent_run (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id varchar(100) NOT NULL REFERENCES app_user(id), epic_id uuid NOT NULL REFERENCES epic(id), status varchar(20) NOT NULL, error_code text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE quest_proposal (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL REFERENCES agent_run(id), epic_id uuid NOT NULL REFERENCES epic(id), user_id varchar(100) NOT NULL REFERENCES app_user(id), title text NOT NULL, description text NOT NULL, rationale text NOT NULL DEFAULT '', status varchar(20) NOT NULL DEFAULT 'PENDING', decision_reason text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE proposal_evidence (proposal_id uuid NOT NULL REFERENCES quest_proposal(id) ON DELETE CASCADE, record_id uuid NOT NULL REFERENCES record(id), record_version integer NOT NULL, excerpt text NOT NULL, PRIMARY KEY(proposal_id, record_id));
+CREATE TABLE quest (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id varchar(100) NOT NULL REFERENCES app_user(id), epic_id uuid NOT NULL REFERENCES epic(id), source_proposal_id uuid NOT NULL UNIQUE REFERENCES quest_proposal(id), title text NOT NULL, description text NOT NULL, status varchar(20) NOT NULL DEFAULT 'TODO', created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE quest_evidence (quest_id uuid NOT NULL REFERENCES quest(id) ON DELETE CASCADE, record_id uuid NOT NULL REFERENCES record(id), record_version integer NOT NULL, PRIMARY KEY(quest_id, record_id));
+CREATE TABLE quest_event (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), quest_id uuid NOT NULL REFERENCES quest(id), event_type varchar(40) NOT NULL, old_status varchar(20), new_status varchar(20), created_at timestamptz NOT NULL DEFAULT now());
+INSERT INTO app_user(id) VALUES ('dev-user-001');
+INSERT INTO user_profile(user_id, occupation, interests_json) VALUES ('dev-user-001', 'Developer', '["learning", "software"]');
+INSERT INTO epic(user_id, title, completion_criteria) SELECT id, 'Developer skill building', 'Create a practical learning outcome' FROM app_user WHERE id='dev-user-001';
