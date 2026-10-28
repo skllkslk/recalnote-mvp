@@ -1,0 +1,10 @@
+{
+  "description": "Organize and search Markdown records, link them to goals, and generate career documents with AI-powered insights for efficient knowledge management.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
