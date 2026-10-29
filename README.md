@@ -5,7 +5,7 @@ Spring Boot (Java 17) is the public API and PostgreSQL is the source of truth. F
 ## Prerequisites
 
 - Docker Desktop with Docker Compose v2
-- For frontend work, Node.js and npm (the frontend directory is currently a placeholder)
+- For frontend work, Node.js 22 and pnpm (Next.js app in `frontend/`)
 
 ## Start locally (PowerShell)
 

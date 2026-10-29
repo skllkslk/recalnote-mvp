@@ -1,3 +1,5 @@
+"use client"
+
 import { FormEvent, useEffect, useState } from "react"
 
 type Page = "home" | "records" | "proposals" | "quests"
@@ -6,7 +8,7 @@ type Epic = { id: string; title: string; completionCriteria: string }
 type Proposal = { id: string; title: string; description: string; status: string }
 type Quest = { id: string; title: string; description: string; status: string }
 
-const API = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "")
+const API = ""
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API}/api/v1${path}`, {

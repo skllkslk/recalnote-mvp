@@ -1,9 +1,11 @@
 node_modules/
 dist/
+/.next/
+/out/
+next-env.d.ts
 build/
 .cache/
 .env*
-.vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*
