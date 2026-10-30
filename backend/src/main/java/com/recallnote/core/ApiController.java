@@ -1,12 +1,16 @@
 package com.recallnote.core;
 
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -14,12 +18,13 @@ import org.springframework.web.server.ResponseStatusException;
 public class ApiController {
     static final ThreadLocal<String> CURRENT_USER = new ThreadLocal<>();
     private final JdbcTemplate db;
-    private final RestClient agent;
+    private final HttpClient agent = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+    private final String agentBaseUrl;
     private final String apiKey;
     public ApiController(JdbcTemplate db, @Value("${agent.base-url}") String baseUrl,
                          @Value("${agent.internal-api-key}") String apiKey,
                          @Value("${app.dev-user-id}") String ignoredDevUserId) {
-        this.db=db; this.apiKey=apiKey; this.agent=RestClient.builder().baseUrl(baseUrl).build();
+        this.db=db; this.apiKey=apiKey; this.agentBaseUrl=baseUrl;
     }
     private String userId() { return CURRENT_USER.get(); }
 
@@ -49,9 +54,16 @@ public class ApiController {
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
         List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 20",userId());
         try {
-            Map response=agent.post().uri("/internal/v1/quest-proposals/generate").header("X-Internal-Api-Key",apiKey)
-                    .body(Map.of("runId",runId.toString(),"userContext",Map.of("userId",userId()),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",List.of()))
-                    .retrieve().body(Map.class);
+            byte[] requestBody=json(Map.of("runId",runId.toString(),"userContext",Map.of("userId",userId()),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",List.of())).getBytes(StandardCharsets.UTF_8);
+            HttpRequest agentRequest=HttpRequest.newBuilder(URI.create(agentBaseUrl+"/internal/v1/quest-proposals/generate"))
+                    .header("Content-Type","application/json")
+                    .header("X-Internal-Api-Key",apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
+                    .build();
+            HttpResponse<String> agentResponse=agent.send(agentRequest,HttpResponse.BodyHandlers.ofString());
+            if(agentResponse.statusCode()<200 || agentResponse.statusCode()>=300)
+                throw new IllegalStateException("Agent API returned HTTP "+agentResponse.statusCode()+": "+agentResponse.body());
+            Map response=new com.fasterxml.jackson.databind.ObjectMapper().readValue(agentResponse.body(),Map.class);
             for(Object o:(List)response.getOrDefault("proposals",List.of())) {
                 Map p=(Map)o; UUID pid=UUID.randomUUID();
                 db.update("INSERT INTO quest_proposal(id,run_id,epic_id,user_id,title,description,rationale) VALUES (?,?,?,?,?,?,?)",pid,runId,epicId,userId(),p.get("title"),p.get("description"),p.getOrDefault("rationale",""));
@@ -63,7 +75,7 @@ public class ApiController {
             }
             db.update("UPDATE agent_run SET status='SUCCEEDED' WHERE id=?",runId);
             return Map.of("runId",runId,"status","SUCCEEDED","proposals",db.queryForList("SELECT id,title,description,status FROM quest_proposal WHERE run_id=?",runId));
-        } catch(Exception ex) { db.update("UPDATE agent_run SET status='FAILED',error_code=? WHERE id=?",ex.getClass().getSimpleName(),runId); throw ex; }
+        } catch(Exception ex) { db.update("UPDATE agent_run SET status='FAILED',error_code=? WHERE id=?",ex.getClass().getSimpleName(),runId); throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"Agent request failed",ex); }
     }
     @GetMapping("/quest-proposals") public List<Map<String,Object>> proposals() { return db.queryForList("SELECT id,title,description,status FROM quest_proposal WHERE user_id=? ORDER BY created_at DESC",userId()); }
     @GetMapping("/quest-proposals/{id}") public Map<String,Object> proposal(@PathVariable UUID id) {
