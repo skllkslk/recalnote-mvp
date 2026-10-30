@@ -5,8 +5,35 @@ import { FormEvent, useEffect, useState } from "react"
 type Page = "home" | "records" | "proposals" | "quests"
 type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; version: number; createdAt: string }
 type Epic = { id: string; title: string; completionCriteria: string }
-type Proposal = { id: string; title: string; description: string; status: string }
-type Quest = { id: string; title: string; description: string; status: string }
+type Evidence = { recordId: string; recordVersion: number; excerpt: string; recordTitle: string }
+type Proposal = { id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
+type Quest = { id: string; title: string; description: string; steps: string[]; completionCriteria: string; status: string }
+type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string }
+
+function ProposalReviewCard({ proposal, busy, onReject, onAccept }: {
+  proposal: Proposal
+  busy: boolean
+  onReject: (proposal: Proposal) => void
+  onAccept: (proposal: Proposal, edited: EditedQuest) => void
+}) {
+  const [title, setTitle] = useState(proposal.title)
+  const [description, setDescription] = useState(proposal.description)
+  const [steps, setSteps] = useState(proposal.steps?.length ? proposal.steps : [""])
+  const [completionCriteria, setCompletionCriteria] = useState(proposal.completionCriteria ?? "")
+
+  return <article className="proposal-card" key={proposal.id}>
+    <p className="eyebrow">검토 대기 · 실행 계획</p>
+    <label className="quest-field">퀘스트 제목<input value={title} onChange={event => setTitle(event.target.value)} /></label>
+    <label className="quest-field">목표<textarea rows={2} value={description} onChange={event => setDescription(event.target.value)} /></label>
+    <div className="quest-plan"><div className="quest-plan-heading"><strong>할 일 (2~5단계)</strong>{steps.length < 5 && <button type="button" className="text-button" onClick={() => setSteps(current => [...current, ""])}>＋ 단계 추가</button>}</div>
+      <ol className="quest-step-editor">{steps.map((step, index) => <li key={index}><input aria-label={`할 일 ${index + 1}`} value={step} onChange={event => setSteps(current => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /><button type="button" className="remove-step" aria-label={`할 일 ${index + 1} 삭제`} onClick={() => setSteps(current => current.length > 1 ? current.filter((_, itemIndex) => itemIndex !== index) : [""])}>×</button></li>)}</ol>
+    </div>
+    <label className="quest-field">완료 기준<textarea rows={2} value={completionCriteria} onChange={event => setCompletionCriteria(event.target.value)} /></label>
+    {proposal.rationale && <p className="quest-rationale">제안 이유: {proposal.rationale}</p>}
+    <div className="proposal-evidence"><strong>근거 기록</strong>{proposal.evidence?.length ? proposal.evidence.map(item => <div className="evidence-item" key={item.recordId}><span>{item.recordTitle} · v{item.recordVersion}</span><blockquote>{item.excerpt}</blockquote></div>) : <p>연결된 근거 기록이 없습니다.</p>}</div>
+    <div className="card-actions"><button className="button secondary" disabled={busy} onClick={() => onReject(proposal)}>거절</button><button className="button primary" disabled={busy || !title.trim() || !description.trim() || !completionCriteria.trim() || steps.length < 2 || steps.length > 5 || steps.some(step => !step.trim())} onClick={() => onAccept(proposal, { title: title.trim(), description: description.trim(), steps: steps.map(step => step.trim()), completionCriteria: completionCriteria.trim() })}>수정 내용으로 수락</button></div>
+  </article>
+}
 
 const API = ""
 
@@ -74,10 +101,10 @@ function App() {
     finally { setBusy(false) }
   }
 
-  async function decide(proposal: Proposal, action: "ACCEPT" | "REJECT") {
+  async function decide(proposal: Proposal, action: "ACCEPT" | "ACCEPT_EDITED" | "REJECT", edited?: EditedQuest) {
     setBusy(true)
     try {
-      await request(`/quest-proposals/${proposal.id}/decisions`, { method: "POST", body: JSON.stringify({ action }) })
+      await request(`/quest-proposals/${proposal.id}/decisions`, { method: "POST", body: JSON.stringify({ action, ...(edited ? { editedTitle: edited.title, editedDescription: edited.description, editedSteps: edited.steps, editedCompletionCriteria: edited.completionCriteria } : {}) }) })
       await refresh()
     } catch (cause) { setError(cause instanceof Error ? cause.message : "제안을 처리하지 못했습니다.") }
     finally { setBusy(false) }
@@ -116,8 +143,8 @@ function App() {
             {records.length ? <div className="archive-grid">{records.map(record => <button className="archive-card" key={record.id} onClick={() => setSelectedRecord(record)}><span className="tag">기록 · v{record.version}</span><h2>{record.title}</h2><p>{record.contentMarkdown.slice(0, 220)}{record.contentMarkdown.length > 220 ? "…" : ""}</p><span className="archive-foot">{new Date(record.createdAt).toLocaleDateString("ko-KR")}</span></button>)}</div> : <div className="empty-state"><span className="empty-icon">▤</span><h2>아직 저장된 기록이 없어요</h2><p>기억하고 싶은 업무 경험을 Markdown 텍스트로 추가하세요.</p><button className="button primary" onClick={() => setShowEditor(true)}>첫 기록 추가</button></div>}
           </>}
         </>}
-        {page === "proposals" && <><div className="page-title"><div><p className="eyebrow">QUEST PROPOSALS</p><h1>퀘스트 제안 검토</h1><p>제안의 근거를 확인하고 수락하거나 거절하세요.</p></div><button className="button primary" disabled={!records.length || busy} onClick={generate}>{busy ? "생성 중…" : "✦ 제안 생성"}</button></div>{pending.length ? <div className="proposal-list">{pending.map(item => <article className="proposal-card" key={item.id}><p className="eyebrow">검토 대기</p><h2>{item.title}</h2><p>{item.description}</p><div className="card-actions"><button className="button secondary" disabled={busy} onClick={() => decide(item, "REJECT")}>거절</button><button className="button primary" disabled={busy} onClick={() => decide(item, "ACCEPT")}>제안 수락</button></div></article>)}</div> : <div className="empty-state"><span className="empty-icon">✦</span><h2>검토할 제안이 없습니다</h2><p>기록을 저장한 뒤 제안을 생성하면 여기에 표시됩니다.</p><button className="button primary" disabled={!records.length || busy} onClick={generate}>제안 생성하기</button></div>}{proposals.filter(item => item.status !== "PENDING").length > 0 && <section className="recent"><h2>검토 완료</h2><div className="recent-list">{proposals.filter(item => item.status !== "PENDING").map(item => <div className="recent-row" key={item.id}><span className="file-tile">{item.status === "ACCEPTED" ? "✓" : "×"}</span><span className="recent-copy"><strong>{item.title}</strong><small>{item.description}</small></span><span className="tag">{item.status === "ACCEPTED" ? "수락됨" : "거절됨"}</span></div>)}</div></section>}</>}
-        {page === "quests" && <><div className="page-title"><div><p className="eyebrow">QUEST BOARD</p><h1>내 퀘스트</h1><p>{epic?.title ?? "활성 목표"}</p></div><button className="button secondary" onClick={() => setPage("proposals")}>제안 검토 →</button></div>{quests.length ? <div className="quest-grid">{quests.map(quest => <article className="quest-card-large" key={quest.id}><span className="tag">{quest.status}</span><h2>{quest.title}</h2><p>{quest.description}</p><div className="quest-stats"><span>활성 Epic과 연결됨</span></div></article>)}</div> : <div className="empty-state"><span className="empty-icon">◇</span><h2>아직 퀘스트가 없습니다</h2><p>제안을 수락하면 퀘스트와 근거 기록이 함께 저장됩니다.</p><button className="button primary" onClick={() => setPage("proposals")}>제안 확인하기</button></div>}</>}
+        {page === "proposals" && <><div className="page-title"><div><p className="eyebrow">QUEST PROPOSALS</p><h1>퀘스트 제안 검토</h1><p>할 일과 완료 기준을 검토하고, 필요한 내용을 수정한 뒤 수락하세요.</p></div><button className="button primary" disabled={!records.length || busy} onClick={generate}>{busy ? "생성 중…" : "✦ 제안 생성"}</button></div>{pending.length ? <div className="proposal-list">{pending.map(item => <ProposalReviewCard key={item.id} proposal={item} busy={busy} onReject={proposal => void decide(proposal, "REJECT")} onAccept={(proposal, edited) => void decide(proposal, "ACCEPT_EDITED", edited)} />)}</div> : <div className="empty-state"><span className="empty-icon">✦</span><h2>검토할 제안이 없습니다</h2><p>기록을 저장한 뒤 제안을 생성하면 여기에 표시됩니다.</p><button className="button primary" disabled={!records.length || busy} onClick={generate}>제안 생성하기</button></div>}{proposals.filter(item => item.status !== "PENDING").length > 0 && <section className="recent"><h2>검토 완료</h2><div className="recent-list">{proposals.filter(item => item.status !== "PENDING").map(item => <div className="recent-row" key={item.id}><span className="file-tile">{item.status === "ACCEPTED" ? "✓" : "×"}</span><span className="recent-copy"><strong>{item.title}</strong><small>{item.description}</small></span><span className="tag">{item.status === "ACCEPTED" ? "수락됨" : "거절됨"}</span></div>)}</div></section>}</>}
+        {page === "quests" && <><div className="page-title"><div><p className="eyebrow">QUEST BOARD</p><h1>내 퀘스트</h1><p>{epic?.title ?? "활성 목표"}</p></div><button className="button secondary" onClick={() => setPage("proposals")}>제안 검토 →</button></div>{quests.length ? <div className="quest-grid">{quests.map(quest => <article className="quest-card-large" key={quest.id}><span className="tag">{quest.status}</span><h2>{quest.title}</h2><p>{quest.description}</p><div className="quest-plan"><strong>할 일</strong><ol className="quest-steps">{quest.steps?.map((step, index) => <li key={index}>{step}</li>)}</ol></div><div className="quest-completion"><strong>완료 기준</strong><p>{quest.completionCriteria || "완료 기준이 지정되지 않은 기존 퀘스트입니다."}</p></div><div className="quest-stats"><span>{epic?.title ?? "활성 Epic"}</span></div></article>)}</div> : <div className="empty-state"><span className="empty-icon">◇</span><h2>아직 퀘스트가 없습니다</h2><p>제안을 수락하면 할 일과 완료 기준을 가진 퀘스트가 저장됩니다.</p><button className="button primary" onClick={() => setPage("proposals")}>제안 확인하기</button></div>}</>}
       </main>
     </div>
     {showEditor && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowEditor(false) }}><form className="modal" onSubmit={saveRecord}><button type="button" className="modal-close" aria-label="닫기" onClick={() => setShowEditor(false)}>×</button><p className="eyebrow">NEW RECORD</p><h2>경험 기록하기</h2><p className="modal-copy">원본 기록은 수정 없이 보관되며, 제안의 근거로 사용됩니다.</p><label>제목<input autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder="예: 검색 전환 개선 프로젝트 회고" required /></label><label>내용 (Markdown)<textarea value={content} onChange={event => setContent(event.target.value)} placeholder="상황, 내가 한 일, 결과를 적어주세요." rows={8} required /></label><div className="card-actions"><button type="button" className="button secondary" onClick={() => setShowEditor(false)}>취소</button><button className="button primary" disabled={busy}>{busy ? "저장 중…" : "기록 저장"}</button></div></form></div>}

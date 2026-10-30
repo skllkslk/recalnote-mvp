@@ -205,3 +205,18 @@
   .mobile-nav { border-top: 2px solid var(--line); }
   .archive-grid, .quest-grid, .proposal-list { grid-template-columns: 1fr; }
 }
+
+.quest-field { display: flex; width: 100%; flex-direction: column; gap: 7px; color: var(--forest-2); font-size: 11px; font-weight: 700; }
+.quest-field input, .quest-field textarea, .quest-step-editor input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 2px; color: var(--ink); background: #0a1020; font: inherit; font-size: 12px; line-height: 1.6; }
+.quest-field textarea { resize: vertical; }
+.quest-plan, .proposal-evidence, .quest-completion { width: 100%; margin-top: 6px; padding: 13px; border: 1px solid var(--line); background: #0d1324; color: var(--ink); font-size: 11px; }
+.quest-plan-heading { display: flex; align-items: center; justify-content: space-between; }
+.text-button { border: 0; color: var(--forest-2); background: transparent; cursor: pointer; font: inherit; font-size: 10px; }
+.quest-step-editor, .quest-steps { display: grid; gap: 8px; margin: 10px 0 0; padding-left: 22px; color: #d8e0f0; font-size: 11px; line-height: 1.7; }
+.quest-step-editor li { display: flex; align-items: center; gap: 6px; padding-left: 2px; }
+.remove-step { flex: 0 0 auto; border: 0; color: var(--orange); background: transparent; cursor: pointer; font-size: 18px; }
+.proposal-evidence > strong, .quest-completion > strong { color: var(--forest-2); }
+.evidence-item { margin-top: 9px; color: var(--muted); }
+.evidence-item blockquote { margin: 5px 0 0; padding-left: 10px; border-left: 2px solid var(--yellow); color: #d8e0f0; line-height: 1.6; }
+.proposal-evidence > p, .quest-completion p, .quest-rationale { color: var(--muted); font-size: 10px; line-height: 1.7; }
+.quest-rationale { margin: 0; }
