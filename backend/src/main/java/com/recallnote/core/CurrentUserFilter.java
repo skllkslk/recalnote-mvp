@@ -20,6 +20,10 @@ public class CurrentUserFilter extends OncePerRequestFilter {
                              @Value("${app.dev-user-id:dev-user-001}") String devUserId, JdbcTemplate db) {
         this.devEnabled=devEnabled; this.devUserId=devUserId; this.db=db;
     }
+    @Override protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        return "/actuator/health".equals(path) || path.startsWith("/actuator/health/");
+    }
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String user=devEnabled ? devUserId : request.getHeader("X-Authenticated-User");
