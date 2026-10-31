@@ -1,7 +1,8 @@
 "use client"
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react"
-import { makeBusinessProjects, makeVillageLayout } from "./memory-world-model"
+import { makeBusinessProjects } from "./memory-world-model"
+import { KnowledgeMap } from "./knowledge-map"
 
 type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio"
 type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; version: number; createdAt: string }
@@ -10,11 +11,6 @@ type Evidence = { recordId: string; recordVersion: number; excerpt: string; reco
 type Proposal = { id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
 type Quest = { id: string; epicId: string; title: string; description: string; steps: string[]; completionCriteria: string; status: string; recordIds?: string[] }
 type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string }
-const tileSpritePositions: Record<string, [number, number]> = {
-  grass: [0, 0], grassAlt: [-32, 0], water: [-64, 0], road: [-96, 0], roadCross: [-128, 0], tree: [-160, 0],
-  house: [0, -32], hall: [-32, -32], flower: [-64, -32], bridge: [-96, -32],
-}
-
 const nav: { id: Page; label: string; icon: string }[] = [
   { id: "home", label: "홈", icon: "⌂" },
   { id: "archive", label: "기록 보관함", icon: "▤" },
@@ -88,8 +84,6 @@ function ProposalReviewCard({ proposal, busy, onReject, onAccept, onOpenRecord }
 
 export default function App() {
   const [page, setPage] = useState<Page>("home")
-  const [selectedMapRegion, setSelectedMapRegion] = useState("")
-  const [worldZoom, setWorldZoom] = useState(1)
   const [records, setRecords] = useState<RecordItem[]>([])
   const [epic, setEpic] = useState<Epic | null>(null)
   const [proposals, setProposals] = useState<Proposal[]>([])
@@ -141,10 +135,6 @@ export default function App() {
   }, [records, submittedQuery])
   const selectedQuest = quests.find(quest => quest.id === studioQuest)
   const worldProjects = useMemo(() => makeBusinessProjects(records, quests), [records, quests])
-  const selectedWorldProject = worldProjects.find(project => project.projectId === selectedMapRegion) ?? worldProjects[0]
-  const selectedWorldLayout = useMemo(() => selectedWorldProject
-    ? makeVillageLayout(selectedWorldProject.projectId, selectedWorldProject.recordIds, selectedWorldProject.questIds)
-    : null, [selectedWorldProject])
 
 
   function openNewRecord() {
@@ -261,17 +251,8 @@ export default function App() {
       </main>}
 
       {page === "world" && <main className="page inner-page world-map-page">
-        <div className="page-title"><div><p className="eyebrow">MEMORY WORLD ? TILE MAP PROTOTYPE</p><h1>기억의 세계</h1><p>프로젝트별로 마을이 만들어지고, 기록과 퀘스트 관계가 지도 위 단서로 이어집니다.</p></div><button className="button secondary" onClick={() => setPage("archive")}>기록 보관함 보기</button></div>
-        <div className="world-data-note"><span>ⓘ</span><p>마을 배치와 타일은 프로젝트 ID에서 별도로 생성합니다. 현재 프로젝트 연결은 <code>project:이름</code> 태그를 임시로 사용합니다.</p></div>
-        {worldProjects.length ? <div className="world-tile-layout"><aside className="world-project-rail"><div className="world-rail-heading"><p className="eyebrow">PROJECT VILLAGES</p><h2>프로젝트 마을</h2></div>{worldProjects.map(project => <button className={`world-project-card ${selectedWorldProject?.projectId === project.projectId ? "selected" : ""}`} key={project.projectId} onClick={() => setSelectedMapRegion(project.projectId)}><span className="project-town-icon">⌂</span><span><b>{project.name}</b><small>기록 {project.recordIds.length}개 ? 퀘스트 {project.questIds.length}개</small></span><i>›</i></button>)}<div className="world-rail-footnote">기록 데이터에는 좌표나 지형 정보를 저장하지 않습니다.</div></aside>
-        {selectedWorldProject && selectedWorldLayout && <section className="world-town-content"><div className="village-map-card"><header className="village-map-header"><div><p className="eyebrow">PROJECT SETTLEMENT</p><h2>{selectedWorldProject.name} 마을</h2><span>기록 {selectedWorldProject.recordIds.length}개가 이 지역을 이루고 있어요</span></div><div className="map-zoom-controls"><button aria-label="축소" disabled={worldZoom <= 0.75} onClick={() => setWorldZoom(value => Math.max(.75, value - .25))}>−</button><span>{Math.round(worldZoom * 100)}%</span><button aria-label="확대" disabled={worldZoom >= 1.5} onClick={() => setWorldZoom(value => Math.min(1.5, value + .25))}>?</button></div></header>
-          <div className="village-viewport"><div className="village-board" style={{ gridTemplateColumns: `repeat(${selectedWorldLayout.width}, ${32 * worldZoom}px)`, gridTemplateRows: `repeat(${selectedWorldLayout.height}, ${32 * worldZoom}px)` }}>
-            {selectedWorldLayout.tiles.map(tile => { const [spriteX, spriteY] = tileSpritePositions[tile.kind]; return <span key={`${tile.x}-${tile.y}`} className={`map-tile tile-${tile.kind}`} style={{ backgroundPosition: `${spriteX * worldZoom}px ${spriteY * worldZoom}px`, backgroundSize: `${192 * worldZoom}px ${64 * worldZoom}px` }} /> })}
-            {selectedWorldLayout.recordNodes.map(node => { const record = records.find(item => item.id === node.id); const size = 32 * worldZoom; return <button key={node.id} className="town-record-pin" style={{ left: `${(node.x + .5) * size}px`, top: `${(node.y + .5) * size}px`, width: `${22 * worldZoom}px`, height: `${22 * worldZoom}px` }} onClick={() => record && setSelectedRecord(record)} title={record?.title} aria-label={`기록 열기: ${record?.title}`}><span>✦</span></button> })}
-            {selectedWorldLayout.questNode && <button className="town-quest-pin" style={{ left: `${(selectedWorldLayout.questNode.x + .5) * 32 * worldZoom}px`, top: `${(selectedWorldLayout.questNode.y + .5) * 32 * worldZoom}px`, width: `${25 * worldZoom}px`, height: `${25 * worldZoom}px` }} onClick={() => setPage("quests")} aria-label={`연결 퀘스트 ${selectedWorldProject.questIds.length}개 보기`}>⚑</button>}
-          </div></div><footer className="village-map-legend"><span><i className="legend-record"/> 기록 노드 {selectedWorldProject.recordIds.length}</span><span><i className="legend-building"/> 마을 건물 {selectedWorldLayout.buildingCount}</span><span><i className="legend-quest"/> 연결 퀘스트 {selectedWorldProject.questIds.length}</span><small>배치는 프로젝트 ID로 재현되는 화면 전용 레이아웃</small></footer></div>
-          <div className="village-linked-data"><section><div className="village-data-heading"><div><p className="eyebrow">MEMORY NODES</p><h3>마을의 기록</h3></div><span>{selectedWorldProject.recordIds.length}</span></div><div className="village-record-list">{records.filter(record => selectedWorldProject.recordIds.includes(record.id)).map(record => <button key={record.id} className="village-record-row" onClick={() => setSelectedRecord(record)}><span>▤</span><b>{record.title}</b><i>지도에서 찾기 ?</i></button>)}</div></section><section><div className="village-data-heading"><div><p className="eyebrow">QUEST LINKS</p><h3>연결된 퀘스트</h3></div><span>{selectedWorldProject.questIds.length}</span></div>{quests.filter(quest => selectedWorldProject.questIds.includes(quest.id)).length ? quests.filter(quest => selectedWorldProject.questIds.includes(quest.id)).map(quest => <button key={quest.id} className="village-quest-row" onClick={() => setPage("quests")}><span>⚑</span><b>{quest.title}</b><i>퀘스트 보기 ?</i></button>) : <p className="village-no-links">이 프로젝트 기록을 근거로 연결한 퀘스트가 없습니다.</p>}</section></div>
-        </section>}</div> : <EmptyState icon="⌂" title="마을을 만들 기록이 아직 없습니다" copy="프로젝트 태그가 있는 기록을 추가하면 타일 지형 위에 마을이 생성됩니다." action={<button className="button primary" onClick={openImport}>기록 가져오기</button>} />}
+        <div className="page-title"><div><p className="eyebrow">EXPLORE YOUR KNOWLEDGE</p><h1>기억의 세계</h1><p>기록과 퀘스트가 연결되며 나만의 지식 지도가 밝혀집니다.</p></div><button className="button secondary" onClick={openImport}>기록 가져오기</button></div>
+        <KnowledgeMap records={records} quests={quests} projects={worldProjects} onOpenRecord={id => { const record = records.find(item => item.id === id); if (record) setSelectedRecord(record) }} onOpenQuests={() => setPage("quests")} onImport={openImport} />
       </main>}
 
       {page === "studio" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">RESULT WORKSHOP</p><h1>결과물 작업실</h1><p>퀘스트와 근거 기록을 모아 Markdown 초안을 편집합니다.</p></div><span className="workshop-stamp">DRAFT WORKSPACE</span></div>{quests.length ? <div className="studio-layout"><section className="studio-main"><label className="field-label">기준 퀘스트<select value={studioQuest} onChange={event => setStudioQuest(event.target.value)}><option value="">퀘스트를 선택하세요</option>{quests.map(quest => <option value={quest.id} key={quest.id}>{quest.title}</option>)}</select></label>{selectedQuest && <div className="studio-quest-summary"><span className="status-pill active">{selectedQuest.status === "DONE" ? "완료" : "퀘스트"}</span><h2>{selectedQuest.title}</h2><p>{selectedQuest.description}</p></div>}<div className="studio-evidence"><div className="plan-heading"><div><strong>근거 기록 선택</strong><small>초안에 포함할 원문을 선택하세요.</small></div><span>{studioRecordIds.length}개 선택</span></div>{records.length ? <div className="evidence-picker">{records.map(record => <label className="evidence-pick" key={record.id}><input type="checkbox" checked={studioRecordIds.includes(record.id)} onChange={() => toggleStudioRecord(record.id)} /><span className="checkmark">✓</span><span><strong>{record.title}</strong><small>{record.contentMarkdown.slice(0, 100)}</small></span><button type="button" className="open-record-link" onClick={event => { event.preventDefault(); setSelectedRecord(record) }}>보기</button></label>)}</div> : <p className="muted-copy">아직 연결할 기록이 없습니다.</p>}</div><button className="button primary" disabled={!selectedQuest || !studioRecordIds.length} onClick={buildDraft}>선택한 근거로 초안 구성</button></section><aside className="studio-side"><span className="side-spark">✦</span><p className="eyebrow">FROM QUEST TO STORY</p><h2>기록을 모아<br />다음 결과물로.</h2><p>현재는 선택한 퀘스트와 기록을 바탕으로 Markdown 편집 초안을 구성합니다. 자동 AI 작성은 모델 연동 후 연결할 수 있습니다.</p><ul><li>퀘스트 목표와 실행 계획</li><li>선택한 기록 원문</li><li>완료 기준</li></ul><button className="button secondary full-width" onClick={() => setPage("quests")}>퀘스트 보드 보기</button></aside></div> : <EmptyState icon="▧" title="작업할 퀘스트가 없습니다" copy="기록을 바탕으로 퀘스트를 만들면 결과물 초안을 구성할 수 있습니다." action={<button className="button primary" onClick={() => setPage("quests")}>퀘스트 보드로 이동</button>} />}{draft && <section className="draft-panel"><div className="draft-toolbar"><div><p className="eyebrow">EDITABLE MARKDOWN</p><h2>초안 편집</h2></div><div className="title-actions"><button className="button secondary" onClick={() => void copyDraft()}>복사</button><button className="button primary" onClick={downloadDraft}>Markdown 내보내기</button></div></div><textarea className="draft-editor" value={draft} onChange={event => setDraft(event.target.value)} aria-label="Markdown 초안 편집" /><p className="editor-footnote">이 초안은 브라우저에서 편집됩니다. 저장 기능은 아직 연결되지 않았습니다.</p></section>}</main>}
