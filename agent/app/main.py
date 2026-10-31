@@ -45,10 +45,11 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
         from agents import Agent, Runner
         snippets = "\n".join(f"[{r['id']} v{r['version']}] {r['title']}: {r['contentMarkdown'][:1200]}" for r in req.records)
         agent = Agent(name="RecallNote quest planner", instructions=(
-            "Create at most one practical, achievable quest proposal for the given epic, grounded only in supplied records. "
+            "The top-level epic is completing a career statement. Create at most one practical, achievable subquest that advances that career statement, grounded only in supplied records. "
             "Write in the language used by the records. The description states the intended outcome. "
+            "Focus steps on identifying the project context and the user's role, clarifying the problem and actions, and expressing verifiable outcomes as a concise career statement bullet. "
             "Give 2-5 concrete steps starting with action verbs, and an observable completionCriteria. "
-            "Avoid generic reflection tasks, invented facts, and duplicating existing quests. "
+            "Avoid generic reflection tasks, invented facts or metrics, and duplicating existing quests. "
             "Cite at least one supplied record with its exact recordId and recordVersion and a short verbatim excerpt. "
             "If no relevant evidence exists, return {\"proposals\": []}."),
             output_type=ProposalOutput)
@@ -65,14 +66,14 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
     proposals = []
     existing_titles = {str(q.get("title", "")).strip().casefold() for q in req.existingQuests}
     candidate = next((r for r in req.records
-                      if f"{r['title']} 검증 및 재발 방지".casefold() not in existing_titles), None)
+                      if f"{r['title']} 경력기술서 항목 만들기".casefold() not in existing_titles), None)
     if candidate:
         r = candidate
-        proposals.append({"clientProposalId": "candidate-1", "title": f"{r['title']} 검증 및 재발 방지",
-                          "description": f"기록에서 해결한 문제를 검증하고 같은 문제가 다시 발생하지 않도록 한다. 목표: {req.epic.get('completionCriteria', '')}",
-                          "steps": ["기록에서 수정한 동작과 기대 결과를 확인한다.", "정상 및 오류 상황을 재현하는 검증 절차를 추가한다.", "검증을 실행하고 결과와 남은 후속 작업을 기록한다."],
-                          "completionCriteria": "검증 절차가 통과하고 결과와 후속 작업이 기록에 남아 있다.",
-                          "rationale": "저장된 경험 기록에서 다음 검증 행동을 도출했습니다.",
+        proposals.append({"clientProposalId": "candidate-1", "title": f"{r['title']} 경력기술서 항목 만들기",
+                          "description": f"원본 경험에서 프로젝트 맥락과 맡은 역할, 해결한 문제와 실행한 행동을 정리하고 확인 가능한 성과를 경력기술서 문장으로 구성한다. 목표: {req.epic.get('completionCriteria', '')}",
+                          "steps": ["기록에서 프로젝트 맥락과 본인의 역할 및 책임을 찾는다.", "해결할 문제와 직접 실행한 행동을 구분해 정리한다.", "원문으로 확인 가능한 결과를 골라 성과 중심의 경력기술서 문장으로 다듬는다."],
+                          "completionCriteria": "역할, 문제, 행동, 검증 가능한 결과가 원본 기록과 연결된 경력기술서 항목으로 정리되어 있다.",
+                          "rationale": "저장된 경험 기록을 경력기술서의 근거와 작성 단계로 바꿨습니다.",
                           "evidence": [{"recordId": r["id"], "recordVersion": r["version"],
                                         "excerpt": r["contentMarkdown"][:240]}]})
     return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}

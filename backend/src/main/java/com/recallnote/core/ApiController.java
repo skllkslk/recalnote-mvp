@@ -52,7 +52,7 @@ public class ApiController {
         UUID epicId=UUID.fromString(body.get("epicId"));
         Map<String,Object> e=db.queryForMap("SELECT id,title,completion_criteria FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId());
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
-        List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 20",userId());
+        List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL AND NOT (tags_json @> '[\"learning-note\"]'::jsonb) ORDER BY updated_at DESC LIMIT 20",userId());
         List<Map<String,Object>> existingQuests=db.queryForList("SELECT title,description,status FROM quest WHERE user_id=? AND epic_id=? AND status IN ('TODO','IN_PROGRESS') ORDER BY created_at DESC LIMIT 20",userId(),epicId);
         List<Map<String,Object>> profileRows=db.queryForList("SELECT COALESCE(occupation,'') AS occupation, interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
         Map<String,Object> profile=profileRows.isEmpty()?Map.of("occupation","","interests","[]"):profileRows.get(0);
