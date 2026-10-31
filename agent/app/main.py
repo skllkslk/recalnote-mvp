@@ -47,6 +47,7 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
         agent = Agent(name="RecallNote quest planner", instructions=(
             "The top-level epic is completing a career statement. Create at most one practical, achievable subquest that advances that career statement, grounded only in supplied records. "
             "Write in the language used by the records. The description states the intended outcome. "
+            "Use the user's occupation, current goal, experience summary, and interests to tailor wording and learning context when relevant; never treat profile details as evidence of work outcomes. "
             "Focus steps on identifying the project context and the user's role, clarifying the problem and actions, and expressing verifiable outcomes as a concise career statement bullet. "
             "Give 2-5 concrete steps starting with action verbs, and an observable completionCriteria. "
             "Avoid generic reflection tasks, invented facts or metrics, and duplicating existing quests. "

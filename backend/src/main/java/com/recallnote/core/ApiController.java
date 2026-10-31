@@ -48,16 +48,27 @@ public class ApiController {
     }
     @GetMapping("/epics/active") public Map<String,Object> epic() { return db.queryForMap("SELECT id,title,completion_criteria AS \"completionCriteria\" FROM epic WHERE user_id=? AND status='ACTIVE' ORDER BY created_at LIMIT 1",userId()); }
 
+    @GetMapping("/users/me/profile") public Map<String,Object> profile() {
+        List<Map<String,Object>> rows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
+        if(rows.isEmpty()) return Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests",List.of());
+        Map<String,Object> result=rows.get(0); result.put("interests",parseJsonArray(result.get("interests"))); return result;
+    }
+    @PutMapping("/users/me/profile") public Map<String,Object> updateProfile(@RequestBody Map<String,Object> body) {
+        db.update("INSERT INTO user_profile(user_id,display_name,occupation,current_goal,experience_summary,interests_json) VALUES (?,?,?,?,?,?::jsonb) ON CONFLICT(user_id) DO UPDATE SET display_name=EXCLUDED.display_name,occupation=EXCLUDED.occupation,current_goal=EXCLUDED.current_goal,experience_summary=EXCLUDED.experience_summary,interests_json=EXCLUDED.interests_json",
+                userId(),Objects.toString(body.getOrDefault("displayName",""),"").trim(),Objects.toString(body.getOrDefault("occupation",""),"").trim(),Objects.toString(body.getOrDefault("currentGoal",""),"").trim(),Objects.toString(body.getOrDefault("experienceSummary",""),"").trim(),json(stringList(body.get("interests"))));
+        return profile();
+    }
+
     @PostMapping("/agent/quest-proposals") @Transactional public Map<String,Object> generate(@RequestBody Map<String,String> body) {
         UUID epicId=UUID.fromString(body.get("epicId"));
         Map<String,Object> e=db.queryForMap("SELECT id,title,completion_criteria FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId());
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
         List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL AND NOT (tags_json @> '[\"learning-note\"]'::jsonb) ORDER BY updated_at DESC LIMIT 20",userId());
         List<Map<String,Object>> existingQuests=db.queryForList("SELECT title,description,status FROM quest WHERE user_id=? AND epic_id=? AND status IN ('TODO','IN_PROGRESS') ORDER BY created_at DESC LIMIT 20",userId(),epicId);
-        List<Map<String,Object>> profileRows=db.queryForList("SELECT COALESCE(occupation,'') AS occupation, interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
-        Map<String,Object> profile=profileRows.isEmpty()?Map.of("occupation","","interests","[]"):profileRows.get(0);
+        List<Map<String,Object>> profileRows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
+        Map<String,Object> profile=profileRows.isEmpty()?Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests","[]"):profileRows.get(0);
         try {
-            byte[] requestBody=json(Map.of("runId",runId.toString(),"userContext",Map.of("userId",userId(),"occupation",profile.get("occupation"),"interests",parseJsonArray(profile.get("interests"))),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",existingQuests)).getBytes(StandardCharsets.UTF_8);
+            byte[] requestBody=json(Map.of("runId",runId.toString(),"userContext",Map.of("userId",userId(),"displayName",profile.get("displayName"),"occupation",profile.get("occupation"),"currentGoal",profile.get("currentGoal"),"experienceSummary",profile.get("experienceSummary"),"interests",parseJsonArray(profile.get("interests"))),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",existingQuests)).getBytes(StandardCharsets.UTF_8);
             HttpRequest agentRequest=HttpRequest.newBuilder(URI.create(agentBaseUrl+"/internal/v1/quest-proposals/generate"))
                     .header("Content-Type","application/json")
                     .header("X-Internal-Api-Key",apiKey)

@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react"
 import { makeBusinessProjects } from "./memory-world-model"
 import { KnowledgeMap } from "./knowledge-map"
 
-type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio" | "learning"
+type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio" | "learning" | "profile"
 type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; version: number; createdAt: string }
 type Epic = { id: string; title: string; completionCriteria: string }
 type Evidence = { recordId: string; recordVersion: number; excerpt: string; recordTitle: string }
@@ -13,9 +13,12 @@ type Quest = { id: string; epicId: string; title: string; description: string; s
 type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string }
 type CareerFields = { summary: string; project: string; period: string; role: string; challenge: string; actions: string; outcome: string }
 const emptyCareerFields: CareerFields = { summary: "", project: "", period: "", role: "", challenge: "", actions: "", outcome: "" }
+type PlayerProfile = { displayName: string; occupation: string; currentGoal: string; experienceSummary: string; interests: string[] }
+const emptyPlayerProfile: PlayerProfile = { displayName: "", occupation: "", currentGoal: "", experienceSummary: "", interests: [] }
 const nav: { id: Page; label: string; icon: string }[] = [
   { id: "home", label: "홈", icon: "⌂" },
   { id: "archive", label: "내 경험", icon: "▤" },
+  { id: "quests", label: "작성 단계", icon: "◇" },
   { id: "studio", label: "경력기술서", icon: "▧" },
   { id: "learning", label: "학습 노트", icon: "✎" },
   { id: "world", label: "기억 지도", icon: "◎" },
@@ -53,6 +56,10 @@ function normalizeTags(value: unknown): string[] {
 }
 
 function Icon({ children }: { children: string }) { return <span className="icon-mark" aria-hidden="true">{children}</span> }
+
+function PlayerSprite() {
+  return <svg viewBox="0 0 32 40" shapeRendering="crispEdges" role="img" aria-label="픽셀 모험가 캐릭터"><path fill="#8358dc" d="M7 10h18v4h-3v4h-2v4h-8v-4h-2v-4H7z"/><path fill="#f3c84f" d="M6 18h20v3H6z"/><path fill="#efb58f" d="M10 21h12v8H10z"/><path fill="#101a2d" d="M12 24h2v2h-2zm7 0h2v2h-2z"/><path fill="#5276bd" d="M8 29h16v7H8z"/><path fill="#8358dc" d="M5 29h3v7H5zm19 0h3v7h-3z"/><path fill="#18233d" d="M9 36h6v3H9zm9 0h6v3h-6z"/><path fill="#6ce8db" d="M27 22h2v15h-2zm-1-2h4v2h-4z"/></svg>
+}
 
 function EmptyState({ icon, title, copy, action }: { icon: string; title: string; copy: string; action?: React.ReactNode }) {
   return <div className="empty-state"><span className="empty-icon"><Icon>{icon}</Icon></span><h2>{title}</h2><p>{copy}</p>{action}</div>
@@ -126,6 +133,8 @@ export default function App() {
   const [studioQuest, setStudioQuest] = useState("")
   const [studioRecordIds, setStudioRecordIds] = useState<string[]>([])
   const [careerFields, setCareerFields] = useState<CareerFields>(emptyCareerFields)
+  const [profile, setProfile] = useState<PlayerProfile>(emptyPlayerProfile)
+  const [profileInterests, setProfileInterests] = useState("")
   const [draft, setDraft] = useState("")
   const [learningTitle, setLearningTitle] = useState("")
   const [learningContent, setLearningContent] = useState("")
@@ -134,14 +143,16 @@ export default function App() {
   async function refresh() {
     setError("")
     try {
-      const [recordRows, activeEpic, proposalRows, questRows] = await Promise.all([
+      const [recordRows, activeEpic, proposalRows, questRows, playerProfile] = await Promise.all([
         request<RecordItem[]>("/records"), request<Epic>("/epics/active"),
-        request<Proposal[]>("/quest-proposals"), request<Quest[]>("/quests"),
+        request<Proposal[]>("/quest-proposals"), request<Quest[]>("/quests"), request<PlayerProfile>("/users/me/profile"),
       ])
       setRecords(recordRows.map(record => ({ ...record, tags: normalizeTags(record.tags) })))
       setEpic(activeEpic)
       setProposals(proposalRows)
       setQuests(questRows)
+      setProfile(playerProfile)
+      setProfileInterests(playerProfile.interests.join(", "))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "데이터를 불러오지 못했습니다.")
     } finally { setLoading(false) }
@@ -164,6 +175,14 @@ export default function App() {
     { title: "성과를 근거와 함께 표현하기", copy: "수치나 검증 자료가 있을 때 성과 문장에 연결하는 방법을 살펴보세요." },
     { title: "경력기술서 문장을 간결하게 다듬기", copy: "상황보다 행동과 결과가 잘 드러나도록 문장을 줄이는 연습을 해보세요." },
   ]
+  const careerStages = [
+    { title: "경험 기록 모으기", complete: experienceRecords.length > 0 },
+    { title: "근거 기록 연결", complete: quests.some(quest => Boolean(quest.recordIds?.length)) || studioRecordIds.length > 0 },
+    { title: "경력기술서 초안", complete: Boolean(draft) },
+  ]
+  const completedCareerStages = careerStages.filter(stage => stage.complete).length
+  const nextAction = !experienceRecords.length ? "경험 기록 가져오기" : pending.length ? "작성 단계 검토하기" : !quests.length ? "작성 단계 제안받기" : !draft ? "초안 작성 이어가기" : "초안 다듬기"
+  const nextActionHint = !experienceRecords.length ? "프로젝트 경험 한 가지부터 추가해 보세요." : pending.length ? "원본 근거를 확인하고 다음 작성 단계를 골라주세요." : !quests.length ? "기록에서 경력기술서 작성 단계를 찾아볼게요." : !draft ? "기록에 연결된 작성 단계를 열어 초안을 만드세요." : "문장과 원본 근거를 확인하고 필요한 부분을 보완하세요."
 
 
   function openNewRecord() {
@@ -244,6 +263,14 @@ export default function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "학습 노트를 저장하지 못했습니다.") }
     finally { setBusy(false) }
   }
+  async function savePlayerProfile(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError("")
+    try {
+      const saved = await request<PlayerProfile>("/users/me/profile", { method: "PUT", body: JSON.stringify({ ...profile, interests: profileInterests.split(",").map(item => item.trim()).filter(Boolean) }) })
+      setProfile(saved); setProfileInterests(saved.interests.join(", ")); setNotice("모험가 프로필을 저장했습니다.")
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "프로필을 저장하지 못했습니다.") }
+    finally { setBusy(false) }
+  }
   async function decide(proposal: Proposal, action: "ACCEPT_EDITED" | "REJECT", edited?: EditedQuest) {
     setBusy(true)
     try {
@@ -296,14 +323,36 @@ export default function App() {
   const recordDetail = selectedRecord && <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedRecord(null) }}><aside className="record-drawer" aria-label="기록 상세"><button className="drawer-close" onClick={() => setSelectedRecord(null)} aria-label="닫기">×</button><p className="eyebrow">원본 기록 · v{selectedRecord.version}</p><div className="drawer-meta"><span className="source-pill">직접 입력 / 가져오기</span><span>{dateLabel(selectedRecord.createdAt)}</span></div><h2>{selectedRecord.title}</h2><pre className="record-body">{selectedRecord.contentMarkdown}</pre><div className="drawer-actions"><button className="button secondary" onClick={() => openEditRecord(selectedRecord)}>기록 수정</button><button className="button danger-quiet" onClick={() => void deleteRecord(selectedRecord)}>기록 삭제</button>{!selectedRecord.tags?.includes("learning-note") && <button className="button primary" onClick={() => { setStudioRecordIds(ids => ids.includes(selectedRecord.id) ? ids : [...ids, selectedRecord.id]); setSelectedRecord(null); setPage("studio") }}>경력기술서 근거로 선택</button>}</div></aside></div>
 
   return <div className="app-shell">
-    <aside className="sidebar"><button className="brand" onClick={() => setPage("home")}><span className="brand-mark">R</span><span>RecallNote</span></button><p className="nav-label">WORKSPACE</p><nav aria-label="주요 메뉴">{nav.map(item => <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => setPage(item.id)}><Icon>{item.icon}</Icon><span>{item.label}</span>{item.id === "quests" && pending.length > 0 && <span className="nav-count">{pending.length}</span>}{item.id === "world" && <span className="beta">실험</span>}</button>)}</nav><div className="sidebar-bottom"><div className="space-note"><span className="space-orb">✦</span><div><strong>기억은 쌓이고</strong><small>다음 선택의 근거가 됩니다</small></div></div><div className="profile-row"><span className="avatar">R</span><span><strong>내 작업 공간</strong><small>개인 기록</small></span><span className="profile-menu">···</span></div></div></aside>
-    <div className="app-main"><header className="topbar"><span className="mobile-brand"><span className="brand-mark">R</span> RecallNote</span><div className="topbar-right"><span className="save-indicator"><i /> 원본 기록 보관 중</span><button className="button primary" onClick={openNewRecord}>＋ 새 기록</button></div></header>
-      {(error || notice) && <div className={`notice ${error ? "error" : "success"}`} role={error ? "alert" : "status"}><span>{error || notice}</span><button onClick={() => { setError(""); setNotice("") }}>닫기</button></div>}
+    <div className="app-main">
+      <div className="app-hud">
+        <header className="topbar"><button type="button" className={`player-hud ${page === "profile" ? "selected" : ""}`} onClick={() => setPage("profile")} aria-label="내 플레이어 프로필 열기"><span className="top-player-sprite"><PlayerSprite /></span><span className="top-player-details"><small>PLAYER · LV.{completedCareerStages + 1}</small><strong>{profile.displayName || "프로필 입력"}</strong><span>기록 {experienceRecords.length} · 단계 {quests.length}</span><i className="player-progress"><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></span><span className="profile-open-mark">↗</span></button><div className="topbar-right"><button className="brand hud-brand" onClick={() => setPage("home")}><span className="brand-mark">R</span><span>RecallNote</span></button><button className="button primary" onClick={openNewRecord}>＋ 새 기록</button></div></header>
+        <nav className="icon-menu" aria-label="게임 메뉴">{nav.map(item => <button key={item.id} className={`icon-menu-item ${page === item.id ? "active" : ""}`} onClick={() => setPage(item.id)}><span className="menu-icon">{item.icon}</span><span className="menu-label">{item.label}</span>{item.id === "quests" && pending.length > 0 && <span className="menu-badge">{pending.length}</span>}</button>)}</nav>
+      </div>      {(error || notice) && <div className={`notice ${error ? "error" : "success"}`} role={error ? "alert" : "status"}><span>{error || notice}</span><button onClick={() => { setError(""); setNotice("") }}>닫기</button></div>}
+      {page === "profile" && <main className="page inner-page profile-page">
+        <div className="page-title"><div><p className="eyebrow">PLAYER PROFILE</p><h1>모험가 정보</h1><p>프로필은 경력기술서 작성과 학습 제안을 개인화하는 데 사용됩니다.</p></div></div>
+        <div className="profile-layout">
+          <section className="profile-character-card"><span className="profile-level">LV. {String(completedCareerStages + 1).padStart(2, "0")}</span><div className="profile-character-scene"><PlayerSprite /><span className="profile-class">MEMORY ALCHEMIST</span></div><div className="profile-character-stats"><span><small>경험 기록</small><b>{experienceRecords.length}</b></span><span><small>학습 노트</small><b>{learningNotes.length}</b></span><span><small>작성 단계</small><b>{quests.length}</b></span></div><div className="profile-xp"><div><small>CAREER QUEST</small><b>{completedCareerStages}/{careerStages.length} 단계</b></div><i><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></div></section>
+          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="profile-form-intro">직업과 목표를 알려주면 AI가 작성 단계와 학습 주제를 더 알맞게 제안합니다.</p>
+            <label className="field-label">표시 이름<input value={profile.displayName} onChange={event => setProfile({ ...profile, displayName: event.target.value })} placeholder="예: 김리콜" /></label>
+            <label className="field-label">직업 / 역할<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 프론트엔드 개발자" /></label>
+            <label className="field-label">현재 목표<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label>
+            <label className="field-label">경력 요약<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label>
+            <label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 접근성, 데이터 시각화, 리더십" /></label>
+            <p className="profile-ai-note">이 정보는 AI 제안의 맥락으로만 사용됩니다. 경력 성과는 저장된 원본 기록으로 확인합니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></div>
+          </form>
+        </div>
+      </main>}
       {page === "home" && <main className="page home-dashboard">
-        <section className="dashboard-search-section"><form className="search-bar dashboard-search" onSubmit={runSearch}><Icon>{"⌕"}</Icon><input value={query} onChange={event => setQuery(event.target.value)} placeholder="어떤 경험을 탐색할까요?" aria-label="기록 검색"/><button className="search-submit" type="submit">탐색 <span>→</span></button></form><div className="search-hints dashboard-hints"><span>탐색 단서</span>{["문제를 해결한 경험", "협업 갈등을 조율한 기록", "성과가 있었던 프로젝트"].map(hint => <button key={hint} type="button" onClick={() => { setQuery(hint); setSubmittedQuery(hint); setPage("search") }}>{hint}</button>)}</div></section>
-        <section className="dashboard-path-section"><div className="dashboard-section-heading"><div><p className="eyebrow">YOUR CAREER WORKSPACE</p><h2>경험을 결과로 연결하기</h2></div><p>기록을 확인하고, 초안을 만들고, 다음 학습을 정리합니다.</p></div><div className="dashboard-path-grid"><button className="dashboard-path-card" onClick={() => setPage("archive")}><span className="path-icon path-record">▤</span><span><b>내 경험</b><small>프로젝트와 성과의 근거 찾기</small></span><i>›</i></button><button className="dashboard-path-card" onClick={() => setPage("studio")}><span className="path-icon path-import">✎</span><span><b>경력기술서</b><small>확인한 근거로 초안 작성하기</small></span><i>›</i></button><button className="dashboard-path-card path-world-card" onClick={() => setPage("learning")}><span className="path-icon path-world">↗</span><span><b>학습 노트</b><small>부족한 점을 배우고 기록하기</small></span><i>›</i></button></div></section>
-        <section className="dashboard-active-quest"><div className="active-quest-copy"><p className="eyebrow">MAIN QUEST · CAREER STATEMENT</p><h2>경력기술서 초안 완성</h2><p>{epic?.completionCriteria ?? "프로젝트 경험과 검증 가능한 성과를 원본 기록에 근거해 정리합니다."}{quests.length ? ` · 하위 퀘스트 ${quests.length}개` : " · 기록을 바탕으로 작성 단계를 만들어요"}</p></div><div className="active-quest-action"><span>{quests.filter(q => q.status !== "DONE").length}개 남은 단계</span><button onClick={continueCareerDraft}>{!experienceRecords.length ? "기록 가져오기" : pending.length ? "제안 검토하기" : quests.some(q => q.status !== "DONE") ? "작성 이어가기" : quests.length ? "초안 다듬기" : "작성 단계 만들기"}<b>→</b></button></div></section>
-        <section className="dashboard-recent-section"><div className="dashboard-section-heading recent-heading"><div><p className="eyebrow">RECENT NOTES</p><h2>최근 추가한 기록</h2></div><button className="text-link" onClick={() => setPage("archive")}>전체 보기 <span>→</span></button></div>{experienceRecords.length ? <div className="dashboard-recent-list">{experienceRecords.slice(0, 4).map((record, index) => <button className="dashboard-recent-row" key={record.id} onClick={() => setSelectedRecord(record)}><span className={`recent-note-icon note-${index % 3}`}>▤</span><span><b>{record.title}</b><small>{record.contentMarkdown.slice(0, 100)}</small></span><time>{dateLabel(record.createdAt)}</time><i>→</i></button>)}</div> : <div className="dashboard-empty-recent"><span>▤</span><p>아직 추가한 기록이 없습니다.</p><button onClick={openImport}>첫 기록 가져오기</button></div>}</section>
+        <section className="dashboard-search-section"><form className="search-bar dashboard-search" onSubmit={runSearch}><Icon>{"⌕"}</Icon><input value={query} onChange={event => setQuery(event.target.value)} placeholder="어떤 경험을 탐색할까요?" aria-label="기록 검색"/><button className="search-submit" type="submit">탐색 <span>→</span></button></form></section>
+
+        <section className="career-journey-card">
+          <div className="career-journey-top"><div><p className="eyebrow">QUEST LOG · 01</p><h2>경력기술서 초안 완성</h2><p>{epic?.completionCriteria ?? "경험을 원본 근거와 함께 경력기술서로 정리합니다."}</p></div><span className="career-stage-count">{completedCareerStages}/{careerStages.length}<small>단계 완료</small></span></div>
+          <div className="career-progress-track" role="progressbar" aria-label="경력기술서 진행률" aria-valuemin={0} aria-valuemax={careerStages.length} aria-valuenow={completedCareerStages}><span style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></div>
+          <div className="career-stage-list">{careerStages.map((stage, index) => <div className={`career-stage ${stage.complete ? "complete" : ""}`} key={stage.title}><i>{stage.complete ? "✓" : index + 1}</i><span>{stage.title}</span></div>)}</div>
+          <div className="career-next-action"><div><p className="eyebrow">NEXT STEP</p><strong>{nextAction}</strong><small>{nextActionHint}</small></div><button className="button primary" onClick={continueCareerDraft}>{nextAction}<span>→</span></button></div>
+          <div className="career-bonus-link"><span>{learningNotes.length ? `학습 노트 ${learningNotes.length}개 저장됨` : "선택 사항 · 학습한 내용도 남겨보세요"}</span><div className="career-utility-links"><button onClick={() => setPage("learning")}>학습 노트 열기 →</button><button onClick={() => setPage("world")}>기억 지도 →</button></div></div>
+        </section>
+        <section className="home-status-row" aria-label="작업 현황"><button onClick={() => setPage("archive")}><span className="status-pixel-icon">▤</span><span><small>경험 기록</small><strong>{experienceRecords.length}</strong></span><i>열기 →</i></button><button onClick={() => setPage("learning")}><span className="status-pixel-icon learning">✎</span><span><small>학습 노트</small><strong>{learningNotes.length}</strong></span><i>열기 →</i></button></section>
       </main>}
 
       {page === "search" && <main className="page inner-page"><div className="search-results-head"><button className="back-link" onClick={() => setPage("home")}>← 홈</button><form className="search-bar compact" onSubmit={runSearch}><Icon>⌕</Icon><input value={query} onChange={event => setQuery(event.target.value)} placeholder="기록 검색" aria-label="검색어" /><button className="search-submit" type="submit">검색</button></form></div><div className="page-title"><div><p className="eyebrow">QUICK SEARCH</p><h1>{submittedQuery ? `“${submittedQuery}” 검색 결과` : "전체 기록"}</h1><p>{searchResults.length}개의 기록이 검색되었습니다.</p></div></div>{loading ? <div className="loading-state">기록을 불러오는 중…</div> : searchResults.length ? <div className="results-layout"><div className="result-list">{searchResults.map(record => <button className="result-card" key={record.id} onClick={() => setSelectedRecord(record)}><div className="result-meta"><span className="source-pill">기록 · v{record.version}</span><span>{dateLabel(record.createdAt)}</span></div><h2>{record.title}</h2><p>{record.contentMarkdown.slice(0, 360)}</p><span className="result-open">원본 기록 보기 →</span></button>)}</div><aside className="search-assist"><span className="assist-gem">✦</span><p className="eyebrow">NEXT STEP</p><h2>찾은 경험을<br />경력기술서로 이어보세요.</h2><p>기록을 바탕으로 작성 단계를 제안하고, 원본 근거를 확인할 수 있습니다.</p><button className="button primary full-width" disabled={!experienceRecords.length || busy} onClick={() => void generateProposal()}>{busy ? "제안 만드는 중…" : "작성 단계 제안 받기 →"}</button><button className="button secondary full-width" onClick={() => setPage("studio")}>경력기술서</button></aside></div> : <EmptyState icon="⌕" title="검색 결과가 없습니다" copy="검색어를 바꾸거나 기록 보관함에 경험을 추가해 보세요." action={<><button className="button secondary" onClick={openImport}>기록 가져오기</button><button className="button primary" onClick={openNewRecord}>직접 기록하기</button></>} />}</main>}
@@ -331,7 +380,7 @@ export default function App() {
 
       {page === "studio" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">CAREER STATEMENT WORKSPACE</p><h1>경력기술서 작업실</h1><p>작성 단계와 원본 근거를 모아 성과 중심의 Markdown 초안을 만듭니다.</p></div><span className="workshop-stamp">DRAFT WORKSPACE</span></div>{quests.length ? <div className="studio-layout"><section className="studio-main"><label className="field-label">작성 단계<select value={studioQuest} onChange={event => { const quest = quests.find(item => item.id === event.target.value); setStudioQuest(event.target.value); setStudioRecordIds(quest?.recordIds ?? []) }}><option value="">작성 단계를 선택하세요</option>{quests.map(quest => <option value={quest.id} key={quest.id}>{quest.title}</option>)}</select></label>{selectedQuest && <div className="studio-quest-summary"><span className="status-pill active">{selectedQuest.status === "DONE" ? "완료" : "작성 단계"}</span><h2>{selectedQuest.title}</h2><p>{selectedQuest.description}</p></div>}{selectedQuest && <CareerStatementForm fields={careerFields} onChange={setCareerFields} />}<div className="studio-evidence"><div className="plan-heading"><div><strong>근거 기록 선택</strong><small>초안에 포함할 원본 경험을 선택하세요.</small></div><span>{studioRecordIds.length}개 선택</span></div>{experienceRecords.length ? <div className="evidence-picker">{experienceRecords.map(record => <label className="evidence-pick" key={record.id}><input type="checkbox" checked={studioRecordIds.includes(record.id)} onChange={() => toggleStudioRecord(record.id)} /><span className="checkmark">✓</span><span><strong>{record.title}</strong><small>{record.contentMarkdown.slice(0, 100)}</small></span><button type="button" className="open-record-link" onClick={event => { event.preventDefault(); setSelectedRecord(record) }}>원문 보기</button></label>)}</div> : <p className="muted-copy">아직 연결할 기록이 없습니다.</p>}</div><button className="button primary" disabled={!selectedQuest || !studioRecordIds.length} onClick={buildDraft}>근거로 경력기술서 초안 만들기</button></section><aside className="studio-side"><span className="side-spark">✦</span><p className="eyebrow">EVIDENCE FIRST</p><h2>경험을<br />성과 문장으로.</h2><p>기록에서 확인할 수 있는 사실과 직접 보완할 항목을 나눠 초안을 구성합니다. 수치와 역할은 원문을 확인해 채워주세요.</p><ul><li>프로젝트와 담당 역할</li><li>문제와 내가 한 행동</li><li>측정 가능한 결과와 근거</li></ul><button className="button secondary full-width" onClick={() => setPage("quests")}>작성 단계 보기</button><button className="button secondary full-width" onClick={() => setPage("learning")}>학습 주제 살펴보기</button></aside></div> : <EmptyState icon="▧" title="먼저 작성 단계를 만들어주세요" copy="경험 기록에서 경력기술서 작성을 위한 작은 단계를 제안받을 수 있습니다." action={<button className="button primary" onClick={() => setPage("quests")}>작성 단계 만들기</button>} />}{draft && <section className="draft-panel"><div className="draft-toolbar"><div><p className="eyebrow">EDITABLE MARKDOWN</p><h2>경력기술서 초안 편집</h2></div><div className="title-actions"><button className="button secondary" onClick={() => void copyDraft()}>복사</button><button className="button primary" onClick={downloadDraft}>Markdown 내보내기</button></div></div><textarea className="draft-editor" value={draft} onChange={event => setDraft(event.target.value)} aria-label="경력기술서 초안 편집" /><p className="editor-footnote">초안은 현재 브라우저에서만 편집됩니다. 수치와 사실을 원본 기록으로 확인한 뒤 내보내세요.</p></section>}</main>}
     </div>
-    <nav className="mobile-nav" aria-label="모바일 메뉴">{nav.map(item => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}><Icon>{item.icon}</Icon><span>{item.label.replace(" 보관함", "").replace(" 보드", "")}</span></button>)}</nav>
+
     {recordDetail}
     {recordEditor && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setRecordEditor(false) }}><form className="modal" onSubmit={saveRecord}><button type="button" className="modal-close" aria-label="닫기" onClick={() => setRecordEditor(false)}>×</button><p className="eyebrow">{editingRecord ? "EDIT RECORD" : "NEW RECORD"}</p><h2>{editingRecord ? "기록 수정" : "업무 경험 기록"}</h2><p className="modal-copy">원본 경험은 경력기술서 작성의 근거로 활용됩니다.</p><label className="field-label">제목<input autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder="예: 검색 전환 개선 프로젝트 회고" required /></label><label className="field-label">내용 <span className="label-hint">Markdown 지원</span><textarea className="large-textarea" value={content} onChange={event => setContent(event.target.value)} placeholder={"상황, 내가 한 일, 결과를 자유롭게 적어보세요.\n\n## 상황\n\n## 내가 한 일\n\n## 결과"} rows={9} required /></label><div className="modal-hint">팁 · 무엇이 문제였고, 어떻게 해결했으며, 결과를 어떻게 확인했는지 적어두면 나중에 다시 찾기 쉽습니다.</div><div className="form-actions"><button type="button" className="button secondary" onClick={() => setRecordEditor(false)}>취소</button><button className="button primary" disabled={busy}>{busy ? "저장 중…" : editingRecord ? "변경 사항 저장" : "기록 저장"}</button></div></form></div>}
   </div>
