@@ -8,9 +8,14 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   request.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
 
   const hasBody = !["GET", "HEAD"].includes(request.method)
+  const headers = new Headers()
+  const contentType = request.headers.get("content-type")
+  const authenticatedUser = request.headers.get("x-authenticated-user")
+  if (contentType) headers.set("Content-Type", contentType)
+  if (authenticatedUser) headers.set("X-Authenticated-User", authenticatedUser)
   const upstream = await fetch(url, {
     method: request.method,
-    headers: request.headers.get("content-type") ? { "Content-Type": request.headers.get("content-type")! } : undefined,
+    headers,
     body: hasBody ? await request.arrayBuffer() : undefined,
     cache: "no-store",
   })
