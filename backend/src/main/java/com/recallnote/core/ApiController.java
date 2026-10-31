@@ -113,7 +113,10 @@ public class ApiController {
     }
     @GetMapping("/quests") public List<Map<String,Object>> quests() {
         List<Map<String,Object>> rows=db.queryForList("SELECT id,epic_id AS \"epicId\",title,description,steps_json::text AS steps,completion_criteria AS \"completionCriteria\",status FROM quest WHERE user_id=? ORDER BY created_at DESC",userId());
-        rows.forEach(row->row.put("steps",stringList(row.get("steps"))));
+        rows.forEach(row->{
+            row.put("steps",stringList(row.get("steps")));
+            row.put("recordIds",db.queryForList("SELECT record_id FROM quest_evidence WHERE quest_id=? ORDER BY record_id",row.get("id")).stream().map(evidence->evidence.get("record_id").toString()).toList());
+        });
         return rows;
     }
     private List<Map<String,Object>> proposalRows(String filterColumn,Object filterValue) {

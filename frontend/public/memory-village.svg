@@ -1,0 +1,40 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 720" shape-rendering="crispEdges">
+<defs>
+ <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#83d9ff"/><stop offset=".58" stop-color="#c5f4f5"/><stop offset="1" stop-color="#efffd2"/></linearGradient>
+ <linearGradient id="hill" x2="0" y2="1"><stop stop-color="#8ee27b"/><stop offset="1" stop-color="#34a85e"/></linearGradient>
+ <linearGradient id="water" x2="0" y2="1"><stop stop-color="#8cf3ef"/><stop offset="1" stop-color="#38b9db"/></linearGradient>
+ <pattern id="blocks" width="28" height="24" patternUnits="userSpaceOnUse"><rect width="28" height="24" fill="#dbbc83"/><path d="M2 3h9v3H2zm14 11h10v3H16zM5 20h7v2H5z" fill="#efd5a0"/><path d="M0 11h6v2H0zm19 0h9v2h-9z" fill="#b28c61" opacity=".6"/></pattern>
+ <g id="cloud"><path d="M12 26h81v-8H81V8H66V2H43v8H28v8H12z" fill="#fff"/><path d="M22 26h62v-5H22z" fill="#eafcff"/></g>
+ <g id="tree"><rect x="30" y="76" width="22" height="63" fill="#925d46"/><rect x="24" y="91" width="34" height="48" fill="#ac7150"/><path d="M5 78V45h12V24h21V7h28v15h19v20h12v36H86v16H19V82H5z" fill="#37a957"/><path d="M19 61V38h15V20h27v12h19v19h10v26H75v12H28V76H13V61z" fill="#69d66c"/><path d="M23 40h13V26h19v14h-9v13H23zm37-11h14v14h11v16H68V46H58z" fill="#9be775"/><rect x="11" y="76" width="17" height="9" fill="#328b55"/><rect x="81" y="70" width="15" height="10" fill="#338e55"/><rect x="35" y="51" width="8" height="8" fill="#ffdc72"/><rect x="69" y="61" width="6" height="7" fill="#ffdc72"/></g>
+ <g id="mushroom"><path d="M6 25V13h6V7h10V2h17v5h10v6h7v12z" fill="#f08475"/><path d="M14 23V12h8V7h13v7h9v9z" fill="#ffb68d"/><rect x="21" y="23" width="20" height="21" fill="#fff0cc"/><rect x="26" y="29" width="3" height="4" fill="#4d566f"/><rect x="34" y="29" width="3" height="4" fill="#4d566f"/><path d="M28 37h7" stroke="#e18778" stroke-width="2"/></g>
+ <g id="flower"><rect x="1" y="5" width="4" height="4" fill="#ffd85d"/><rect x="-2" y="2" width="4" height="4" fill="#fff2a4"/><rect x="5" y="2" width="4" height="4" fill="#fff2a4"/><rect x="2" y="9" width="3" height="8" fill="#399b58"/></g>
+</defs>
+<rect width="420" height="720" fill="url(#sky)"/>
+<!-- floating clouds -->
+<use href="#cloud" x="32" y="62"/><use href="#cloud" x="266" y="124" transform="scale(.76) translate(82 20)"/><use href="#cloud" x="253" y="27" transform="scale(.55) translate(350 110)"/>
+<!-- faraway pastel mountains -->
+<path d="M0 295 68 214l37 44 63-92 91 119 43-58 118 103v139H0z" fill="#9bcbe2"/><path d="m35 253 33-39 22 27-15-5-9 8-11-6zm102-49 31-38 37 49-22-12-14 7-13-13-8 10zM286 265l16-22 22 22-13-4-8 5-7-4z" fill="#f6ffff"/><path d="M0 333q94-67 193 0t227-2v148H0z" fill="#87d7a4"/>
+<!-- magical forest canopy and ground -->
+<path d="M0 417q94-50 190 0t230-4v307H0z" fill="url(#hill)"/><path d="M0 504q111-27 219 0t201-8v224H0z" fill="#61c76b"/>
+<!-- broad raised platforms -->
+<path d="M0 548h127v19H0z" fill="#8a6043"/><path d="M0 541h127v12H0z" fill="#c18a58"/><path d="M4 544h119v5H4z" fill="#f1bd73"/><path d="M230 432h190v20H230z" fill="#8a6043"/><path d="M230 424h190v12H230z" fill="#bd8756"/><path d="M235 427h180v5H235z" fill="#f5c779"/>
+<!-- flowered floating island -->
+<path d="M148 338h100v16h-13v9h-14v8h-53v-8h-13v-9h-7z" fill="#9b704c"/><path d="M143 332h110v12H143z" fill="#61c86f"/><path d="M150 327h93v9h-93z" fill="#a7ea79"/><use href="#flower" x="160" y="316"/><use href="#flower" x="222" y="317"/>
+<!-- giant friendly trees -->
+<use href="#tree" x="-26" y="311"/><use href="#tree" x="312" y="275" transform="scale(1.1) translate(-30 -25)"/><use href="#tree" x="40" y="446" transform="scale(.75) translate(18 140)"/><use href="#tree" x="341" y="485" transform="scale(.82) translate(74 110)"/>
+<!-- cozy fantasy cottage -->
+<g transform="translate(270 349)"><path d="M4 72 24 43h99l28 29v76H4z" fill="#fff0c9"/><path d="M0 72 25 24h100l29 48z" fill="#8457a1"/><path d="M10 68 30 32h90l20 36z" fill="#ae71c1"/><path d="M24 57h100v10H24z" fill="#754c91"/><path d="M44 82h25v28H44zM88 81h25v27H88z" fill="#80d8e4" stroke="#ad774c" stroke-width="5"/><rect x="68" y="101" width="25" height="47" fill="#936044"/><rect x="74" y="107" width="13" height="37" fill="#bd875b"/><circle cx="84" cy="128" r="2" fill="#ffe092"/><path d="M39 24V8h14V-2h38V8h15v16" fill="#da9a6f"/><rect x="58" y="-8" width="28" height="15" fill="#f4c27e"/></g>
+<!-- bright crystal portal -->
+<g transform="translate(74 425)"><path d="M4 50V23l10-12h35l10 12v27z" fill="#503b82"/><path d="M11 46V25l8-9h25l8 9v21z" fill="#54d5e5"/><path d="M18 43V27l7-7h13l7 7v16z" fill="#d5ffff"/><path d="M30 10V-2m-7 6 7-11 7 11" stroke="#fff3a2" stroke-width="4"/><path d="M0 53h63v8H0z" fill="#b48b5b"/><rect x="27" y="29" width="3" height="3" fill="#fff"/><rect x="38" y="35" width="3" height="3" fill="#fff"/></g>
+<!-- stepping stones -->
+<path d="M130 616h74v23h-74z" fill="#a6d6ad"/><path d="M208 580h70v23h-70z" fill="#b7dfb4"/><path d="M291 615h62v20h-62z" fill="#a6d6ad"/><path d="M142 620h50v8h-50zm77-36h44v8h-44zm82 35h39v7h-39z" fill="#e0f1c1"/>
+<!-- waterfall pond -->
+<path d="M260 644h160v76H244q5-23 16-31z" fill="url(#water)"/><path d="M274 641h146v12H274z" fill="#987853"/><path d="M285 651h9v51h-9zm32 0h7v59h-7zm30 0h8v51h-8zm34 0h7v60h-7z" fill="#f2d295"/><path d="M262 683q22-8 44 0t44 0 48 0" fill="none" stroke="#d4ffff" stroke-width="4"/>
+<!-- little mushrooms and flowers -->
+<use href="#mushroom" x="139" y="464"/><use href="#mushroom" x="213" y="491" transform="scale(.7) translate(92 218)"/><use href="#flower" x="177" y="551"/><use href="#flower" x="247" y="511"/><use href="#flower" x="117" y="584"/><use href="#flower" x="367" y="531"/>
+<!-- tiny adventurer with backpack -->
+<g transform="translate(176 568)"><ellipse cx="26" cy="83" rx="20" ry="6" fill="#348550"/><rect x="11" y="60" width="12" height="20" fill="#4251a2"/><rect x="30" y="60" width="12" height="20" fill="#4251a2"/><rect x="9" y="77" width="15" height="7" fill="#604536"/><rect x="29" y="77" width="15" height="7" fill="#604536"/><rect x="9" y="36" width="35" height="30" fill="#f28b65"/><rect x="15" y="40" width="24" height="17" fill="#f8bf79"/><rect x="3" y="41" width="10" height="20" fill="#55a9c4"/><rect x="40" y="42" width="10" height="20" fill="#d98b60"/><rect x="14" y="13" width="29" height="27" fill="#f1bd88"/><path d="M11 20V8h9V1h21v8h8v12z" fill="#79533c"/><path d="M17 13h25v7H17z" fill="#d79a55"/><rect x="20" y="24" width="4" height="4" fill="#49394b"/><rect x="34" y="24" width="4" height="4" fill="#49394b"/><path d="M24 33h10" stroke="#c66f60" stroke-width="3"/><rect x="28" y="40" width="7" height="18" fill="#f6dd8a"/><path d="M45 48 59 34l4 4-14 17z" fill="#8e6540"/><path d="m58 35 8-11 2 12-6 5z" fill="#b8f6ff"/></g>
+<!-- decorative sign and wooden fence -->
+<g transform="translate(20 614)"><rect x="22" y="25" width="6" height="55" fill="#88583b"/><path d="M0 0h62v34H0z" fill="#9c6946"/><path d="M5 5h52v24H5z" fill="#efc678"/><path d="M12 12h38m-33 8h29" stroke="#92633f" stroke-width="3"/></g>
+<path d="M0 706h150m-144-18v32m34-32v32m34-32v32m34-32v32m34-32v32" stroke="#945f3e" stroke-width="8"/><path d="M0 705h150" stroke="#e8b36e" stroke-width="4"/>
+</svg>
