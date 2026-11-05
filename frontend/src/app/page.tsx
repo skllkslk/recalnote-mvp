@@ -4,17 +4,20 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react"
 import { makeBusinessProjects } from "./memory-world-model"
 import { KnowledgeMap } from "./knowledge-map"
 
-type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio" | "learning" | "profile"
+type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio" | "learning" | "profile" | "agent"
 type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; version: number; createdAt: string }
-type Epic = { id: string; title: string; completionCriteria: string }
+type Epic = { id: string; title: string; completionCriteria: string; useCase?: "CAREER" | "LEARNING" }
 type Evidence = { recordId: string; recordVersion: number; excerpt: string; recordTitle: string }
 type Proposal = { id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
 type Quest = { id: string; epicId: string; title: string; description: string; steps: string[]; completionCriteria: string; status: string; recordIds?: string[] }
 type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string }
 type CareerFields = { summary: string; project: string; period: string; role: string; challenge: string; actions: string; outcome: string }
 const emptyCareerFields: CareerFields = { summary: "", project: "", period: "", role: "", challenge: "", actions: "", outcome: "" }
-type PlayerProfile = { displayName: string; occupation: string; currentGoal: string; experienceSummary: string; interests: string[] }
-const emptyPlayerProfile: PlayerProfile = { displayName: "", occupation: "", currentGoal: "", experienceSummary: "", interests: [] }
+type PlayerProfile = { displayName: string; occupation: string; currentGoal: string; experienceSummary: string; interests: string[]; useCase: "CAREER" | "LEARNING" }
+type AgentCardOption = { id: string; label: string; requiresText?: boolean }
+type AgentCard = { type: string; id: string; title: string; options?: AgentCardOption[]; allowFreeText?: boolean; value?: unknown; sourceRefs?: Evidence[] }
+type AgentSession = { sessionId: string; useCase: "CAREER" | "LEARNING"; state: string; npc: { name: string; message: string }; cards: AgentCard[]; proposalId?: string }
+const emptyPlayerProfile: PlayerProfile = { displayName: "", occupation: "", currentGoal: "", experienceSummary: "", interests: [], useCase: "CAREER" }
 const nav: { id: Page; label: string; icon: string }[] = [
   { id: "home", label: "홈", icon: "⌂" },
   { id: "archive", label: "내 경험", icon: "▤" },
@@ -139,6 +142,11 @@ export default function App() {
   const [learningTitle, setLearningTitle] = useState("")
   const [learningContent, setLearningContent] = useState("")
   const [notice, setNotice] = useState("")
+  const [agentSession, setAgentSession] = useState<AgentSession | null>(null)
+  const [agentCapture, setAgentCapture] = useState("")
+  const [agentTitle, setAgentTitle] = useState("")
+  const [agentFreeText, setAgentFreeText] = useState<Record<string, string>>({})
+  const [agentBusy, setAgentBusy] = useState(false)
 
   async function refresh() {
     setError("")
@@ -181,8 +189,8 @@ export default function App() {
     { title: "경력기술서 초안", complete: Boolean(draft) },
   ]
   const completedCareerStages = careerStages.filter(stage => stage.complete).length
-  const nextAction = !experienceRecords.length ? "경험 기록 가져오기" : pending.length ? "작성 단계 검토하기" : !quests.length ? "작성 단계 제안받기" : !draft ? "초안 작성 이어가기" : "초안 다듬기"
-  const nextActionHint = !experienceRecords.length ? "프로젝트 경험 한 가지부터 추가해 보세요." : pending.length ? "원본 근거를 확인하고 다음 작성 단계를 골라주세요." : !quests.length ? "기록에서 경력기술서 작성 단계를 찾아볼게요." : !draft ? "기록에 연결된 작성 단계를 열어 초안을 만드세요." : "문장과 원본 근거를 확인하고 필요한 부분을 보완하세요."
+  const nextAction = !experienceRecords.length ? "NPC와 경험 정리 시작하기" : pending.length ? "AI 제안 검토하기" : !quests.length ? "NPC에게 다음 단계 묻기" : !draft ? "초안 작성 이어가기" : "초안 다듬기"
+  const nextActionHint = !experienceRecords.length ? "자유롭게 경험을 들려주면 리콜 가이드가 함께 정리합니다." : pending.length ? "원본 근거를 확인하고 다음 단계를 승인해 주세요." : !quests.length ? "기록을 바탕으로 다음 작성 또는 학습 단계를 만들어볼게요." : !draft ? "기록에 연결된 작성 단계를 열어 초안을 만드세요." : "문장과 원본 근거를 확인하고 필요한 부분을 보완하세요."
 
 
   function openNewRecord() {
@@ -271,6 +279,39 @@ export default function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "프로필을 저장하지 못했습니다.") }
     finally { setBusy(false) }
   }
+
+  function openAgent() {
+    setAgentSession(null); setAgentCapture(""); setAgentTitle(""); setAgentFreeText({}); setPage("agent")
+  }
+
+  async function startAgentSession(event: FormEvent) {
+    event.preventDefault()
+    if (!agentCapture.trim()) return
+    setAgentBusy(true); setError("")
+    try {
+      const session = await request<AgentSession>("/agent-sessions", { method: "POST", body: JSON.stringify({ useCase: profile.useCase, title: agentTitle.trim(), contentMarkdown: agentCapture.trim() }) })
+      setAgentSession(session); await refresh(); setNotice("NPC가 경험을 정리하기 시작했습니다.")
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "대화를 시작하지 못했습니다.") }
+    finally { setAgentBusy(false) }
+  }
+
+  async function answerAgentCard(card: AgentCard, value: unknown) {
+    if (!agentSession) return
+    setAgentBusy(true); setError("")
+    try {
+      const session = await request<AgentSession>(`/agent-sessions/${agentSession.sessionId}/turns`, { method: "POST", body: JSON.stringify({ cardId: card.id, value }) })
+      setAgentSession(session)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "대화를 진행하지 못했습니다.") }
+    finally { setAgentBusy(false) }
+  }
+
+  async function approveAgentSession() {
+    if (!agentSession) return
+    setAgentBusy(true); setError("")
+    try { await request(`/agent-sessions/${agentSession.sessionId}/approve`, { method: "POST" }); await refresh(); setNotice("승인한 결과를 작성 단계에 추가했습니다."); setPage("quests") }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "결과를 승인하지 못했습니다.") }
+    finally { setAgentBusy(false) }
+  }
   async function decide(proposal: Proposal, action: "ACCEPT_EDITED" | "REJECT", edited?: EditedQuest) {
     setBusy(true)
     try {
@@ -291,14 +332,14 @@ export default function App() {
       "### 문제와 목표", careerFields.challenge.trim() || selectedQuest.description || "[당시 상황과 해결해야 했던 문제]", "",
       "### 실행한 일", actions, "",
       "### 결과와 검증", careerFields.outcome.trim() || selectedQuest.completionCriteria || "[결과와 이를 확인한 방법]", "",
-      "### 근거가 된 원본 기록", ...sources.map(record => `#### ${record.title}\n> ${record.contentMarkdown.slice(0, 1600).replaceAll("\n", "\n> ")}`), "",
+      "### 근거가 된 원본 기록", ...sources.map(record => `#### ${record.title}\n> ${record.contentMarkdown.slice(0, 1600).replace(/\n/g, "\n> ")}`), "",
       "<!-- 원본 기록으로 확인되지 않는 수치나 사실은 추가하지 말고, 대괄호 항목을 실제 경험에 맞게 보완하세요. -->",
     ].join("\n")
     setDraft(text); setNotice("선택한 퀘스트와 원본 근거로 경력기술서 초안을 구성했습니다.")
   }
 
   function continueCareerDraft() {
-    if (!experienceRecords.length) { openImport(); return }
+    if (!experienceRecords.length) { openAgent(); return }
     if (pending.length) { setPage("quests"); return }
     const nextQuest = quests.find(quest => quest.status === "IN_PROGRESS") || quests.find(quest => quest.status !== "DONE") || quests[0]
     if (nextQuest) {
@@ -307,7 +348,7 @@ export default function App() {
       setPage("studio")
       return
     }
-    void generateProposal()
+    openAgent()
   }
   async function copyDraft() {
     try { await navigator.clipboard.writeText(draft); setNotice("초안을 복사했습니다.") }
@@ -327,16 +368,33 @@ export default function App() {
       <div className="app-hud">
         <header className="topbar"><button type="button" className={`player-hud ${page === "profile" ? "selected" : ""}`} onClick={() => setPage("profile")} aria-label="내 플레이어 프로필 열기"><span className="top-player-sprite"><PlayerSprite /></span><span className="top-player-details"><small>PLAYER · LV.{completedCareerStages + 1}</small><strong>{profile.displayName || "프로필 입력"}</strong><span>기록 {experienceRecords.length} · 단계 {quests.length}</span><i className="player-progress"><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></span><span className="profile-open-mark">↗</span></button><div className="topbar-right"><button className="brand hud-brand" onClick={() => setPage("home")}><span className="brand-mark">R</span><span>RecallNote</span></button><button className="button primary" onClick={openNewRecord}>＋ 새 기록</button></div></header>
       </div>      {(error || notice) && <div className={`notice ${error ? "error" : "success"}`} role={error ? "alert" : "status"}><span>{error || notice}</span><button onClick={() => { setError(""); setNotice("") }}>닫기</button></div>}
+      {page === "agent" && <main className="page inner-page agent-page">
+        <button className="back-link" onClick={() => setPage("home")}>← 홈</button>
+        <div className="page-title"><div><p className="eyebrow">NPC SESSION · {profile.useCase === "LEARNING" ? "LEARNING ROADMAP" : "CAREER STATEMENT"}</p><h1>리콜 가이드와 시작하기</h1><p>기록을 목록에서 조립하지 않아도 괜찮아요. 경험을 이야기하면 필요한 내용을 함께 정리합니다.</p></div><span className="workshop-stamp">GUIDED QUEST</span></div>
+        {!agentSession ? <form className="agent-capture-card" onSubmit={startAgentSession}>
+          <div className="npc-avatar"><PlayerSprite /></div>
+          <div className="npc-bubble"><p className="eyebrow">리콜 가이드</p><h2>{profile.useCase === "LEARNING" ? "무엇을 배우고 싶나요?" : "어떤 경험을 정리해볼까요?"}</h2><p>{profile.useCase === "LEARNING" ? "배우고 싶은 주제와 지금 알고 있는 내용을 편하게 적어주세요." : "문제, 내가 한 일, 결과를 완벽한 형식 없이 자유롭게 들려주세요."}</p></div>
+          <label className="field-label">제목 <span className="label-hint">선택 사항</span><input value={agentTitle} onChange={event => setAgentTitle(event.target.value)} placeholder={profile.useCase === "LEARNING" ? "예: Spring Security 학습" : "예: 협력사 권한 오류 수정"} /></label>
+          <label className="field-label">{profile.useCase === "LEARNING" ? "학습 재료" : "경험 이야기"}<textarea className="large-textarea" rows={10} value={agentCapture} onChange={event => setAgentCapture(event.target.value)} placeholder={profile.useCase === "LEARNING" ? "배우고 싶은 것, 현재 수준, 프로젝트에서 막힌 부분을 자유롭게 적어주세요." : "어떤 문제가 있었고, 내가 무엇을 했으며, 결과를 어떻게 확인했는지 자유롭게 적어주세요."} required /></label>
+          <div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>나중에 하기</button><button type="submit" className="button primary" disabled={agentBusy || !agentCapture.trim()}>{agentBusy ? "대화 준비 중…" : "NPC와 정리 시작하기 →"}</button></div>
+        </form> : <section className="agent-dialogue-card">
+          <div className="agent-dialogue-header"><div className="npc-avatar small"><PlayerSprite /></div><div><p className="eyebrow">리콜 가이드</p><strong>{agentSession.npc.message}</strong></div><span className="status-pill active">{agentSession.state === "PROPOSAL_PENDING" ? "결과 확인" : "대화 중"}</span></div>
+          <div className="agent-card-list">{agentSession.cards.map(card => <article className={`agent-card agent-card-${card.type.toLowerCase()}`} key={card.id}><p className="eyebrow">{card.type === "EVIDENCE" ? "원본 근거 확인" : card.type === "PROPOSAL" ? "AI 제안" : "확인할 내용"}</p><h2>{card.title}</h2>{card.type === "PROPOSAL" && card.value != null && typeof card.value === "object" && <div className="agent-proposal-preview"><strong>{String((card.value as Record<string, unknown>).title ?? "")}</strong><p>{String((card.value as Record<string, unknown>).description ?? "")}</p><ol>{Array.isArray((card.value as Record<string, unknown>).steps) && ((card.value as Record<string, unknown>).steps as unknown[]).map((step, index) => <li key={index}>{String(step)}</li>)}</ol><p className="completion-box"><strong>완료 기준</strong><br />{String((card.value as Record<string, unknown>).completionCriteria ?? "")}</p></div>}
+              {card.type === "EVIDENCE" && <><blockquote>{String(card.value ?? "")}</blockquote>{card.sourceRefs?.map(source => <small key={`${source.recordId}-${source.recordVersion}`}>원본 기록 v{source.recordVersion}</small>)}</>}
+              {card.type !== "PROPOSAL" && <div className="agent-card-options">{card.options?.map(option => <button className="button secondary" key={option.id} disabled={agentBusy} onClick={() => void answerAgentCard(card, agentFreeText[card.id] && option.requiresText ? agentFreeText[card.id] : option.id)}>{option.label}</button>)}</div>}
+              {card.allowFreeText && <div className="agent-free-text"><input value={agentFreeText[card.id] ?? ""} onChange={event => setAgentFreeText(current => ({ ...current, [card.id]: event.target.value }))} placeholder="직접 입력할 내용" /><button className="button primary" disabled={agentBusy || !agentFreeText[card.id]?.trim()} onClick={() => void answerAgentCard(card, agentFreeText[card.id].trim())}>답변 보내기</button></div>}
+              {card.type === "PROPOSAL" && <div className="form-actions"><button className="button secondary" disabled={agentBusy} onClick={() => setPage("home")}>나중에 확인</button><button className="button primary" disabled={agentBusy} onClick={() => void approveAgentSession()}>이 결과 승인하기</button></div>}
+            </article>)}</div>
+        </section>}
+      </main>}
       {page === "profile" && <main className="page inner-page profile-page">
         <div className="page-title"><div><p className="eyebrow">PLAYER PROFILE</p><h1>모험가 정보</h1><p>프로필은 경력기술서 작성과 학습 제안을 개인화하는 데 사용됩니다.</p></div></div>
         <div className="profile-layout">
           <section className="profile-character-card"><span className="profile-level">LV. {String(completedCareerStages + 1).padStart(2, "0")}</span><div className="profile-character-scene"><PlayerSprite /><span className="profile-class">MEMORY ALCHEMIST</span></div><div className="profile-character-stats"><span><small>경험 기록</small><b>{experienceRecords.length}</b></span><span><small>학습 노트</small><b>{learningNotes.length}</b></span><span><small>작성 단계</small><b>{quests.length}</b></span></div><div className="profile-xp"><div><small>CAREER QUEST</small><b>{completedCareerStages}/{careerStages.length} 단계</b></div><i><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></div></section>
-          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="profile-form-intro">직업과 목표를 알려주면 AI가 작성 단계와 학습 주제를 더 알맞게 제안합니다.</p>
+          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="profile-form-intro">먼저 어떤 결과물을 만들지 선택해 주세요. 선택에 따라 NPC의 질문과 제안이 달라집니다.</p>
+            <div className="use-case-picker"><button type="button" className={`use-case-option ${profile.useCase === "CAREER" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "CAREER" })}><strong>경력기술서 초안</strong><small>경험을 성과 중심의 문장과 작성 단계로 정리</small></button><button type="button" className={`use-case-option ${profile.useCase === "LEARNING" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "LEARNING" })}><strong>학습 로드맵</strong><small>경험과 목표를 다음 학습 단계로 연결</small></button></div>
             <label className="field-label">표시 이름<input value={profile.displayName} onChange={event => setProfile({ ...profile, displayName: event.target.value })} placeholder="예: 김리콜" /></label>
-            <label className="field-label">직업 / 역할<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 프론트엔드 개발자" /></label>
-            <label className="field-label">현재 목표<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label>
-            <label className="field-label">경력 요약<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label>
-            <label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 접근성, 데이터 시각화, 리더십" /></label>
+            {profile.useCase === "CAREER" ? <><label className="field-label">현재 역할<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 백엔드 개발자" /></label><label className="field-label">목표 직무 또는 작성 목적<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label><label className="field-label">경력 요약<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label><label className="field-label">관심 기술 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: Spring Boot, 접근성, 데이터" /></label></> : <><label className="field-label">현재 학습 수준<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 기본 개념을 아는 초급" /></label><label className="field-label">학습 목표<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 실제 프로젝트에 적용하기" /></label><label className="field-label">배우고 싶은 주제<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="어떤 주제를 어떤 이유로 배우고 싶은지 적어보세요." /></label><label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 보안, 테스트, 시스템 설계" /></label></>}
             <p className="profile-ai-note">이 정보는 AI 제안의 맥락으로만 사용됩니다. 경력 성과는 저장된 원본 기록으로 확인합니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></div>
           </form>
         </div>

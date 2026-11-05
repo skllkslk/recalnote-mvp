@@ -8,6 +8,7 @@ export type WorldRecord = {
 
 export type WorldQuest = {
   id: string
+  title: string
   recordIds?: string[]
 }
 

@@ -46,29 +46,97 @@ public class ApiController {
         if(db.update("UPDATE record SET deleted_at=now() WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId())==0) throw new NotFoundException();
         return ResponseEntity.noContent().build();
     }
-    @GetMapping("/epics/active") public Map<String,Object> epic() { return db.queryForMap("SELECT id,title,completion_criteria AS \"completionCriteria\" FROM epic WHERE user_id=? AND status='ACTIVE' ORDER BY created_at LIMIT 1",userId()); }
+    @GetMapping("/epics/active") public Map<String,Object> epic() {
+        return db.queryForMap("SELECT e.id,e.title,e.completion_criteria AS \"completionCriteria\",e.use_case AS \"useCase\" FROM epic e LEFT JOIN user_profile p ON p.user_id=e.user_id WHERE e.user_id=? AND e.status='ACTIVE' AND e.use_case=COALESCE(p.use_case,'CAREER') ORDER BY e.created_at LIMIT 1",userId());
+    }
 
     @GetMapping("/users/me/profile") public Map<String,Object> profile() {
-        List<Map<String,Object>> rows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
-        if(rows.isEmpty()) return Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests",List.of());
+        List<Map<String,Object>> rows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests,COALESCE(use_case,'CAREER') AS \"useCase\" FROM user_profile WHERE user_id=?",userId());
+        if(rows.isEmpty()) return Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests",List.of(),"useCase","CAREER");
         Map<String,Object> result=rows.get(0); result.put("interests",parseJsonArray(result.get("interests"))); return result;
     }
     @PutMapping("/users/me/profile") public Map<String,Object> updateProfile(@RequestBody Map<String,Object> body) {
-        db.update("INSERT INTO user_profile(user_id,display_name,occupation,current_goal,experience_summary,interests_json) VALUES (?,?,?,?,?,?::jsonb) ON CONFLICT(user_id) DO UPDATE SET display_name=EXCLUDED.display_name,occupation=EXCLUDED.occupation,current_goal=EXCLUDED.current_goal,experience_summary=EXCLUDED.experience_summary,interests_json=EXCLUDED.interests_json",
-                userId(),Objects.toString(body.getOrDefault("displayName",""),"").trim(),Objects.toString(body.getOrDefault("occupation",""),"").trim(),Objects.toString(body.getOrDefault("currentGoal",""),"").trim(),Objects.toString(body.getOrDefault("experienceSummary",""),"").trim(),json(stringList(body.get("interests"))));
+        String selectedUseCase=normalizedUseCase(body.get("useCase"));
+        db.update("INSERT INTO user_profile(user_id,display_name,occupation,current_goal,experience_summary,interests_json,use_case) VALUES (?,?,?,?,?,?::jsonb,?) ON CONFLICT(user_id) DO UPDATE SET display_name=EXCLUDED.display_name,occupation=EXCLUDED.occupation,current_goal=EXCLUDED.current_goal,experience_summary=EXCLUDED.experience_summary,interests_json=EXCLUDED.interests_json,use_case=EXCLUDED.use_case",
+                userId(),Objects.toString(body.getOrDefault("displayName",""),"").trim(),Objects.toString(body.getOrDefault("occupation",""),"").trim(),Objects.toString(body.getOrDefault("currentGoal",""),"").trim(),Objects.toString(body.getOrDefault("experienceSummary",""),"").trim(),json(stringList(body.get("interests"))),selectedUseCase);
         return profile();
+    }
+
+    @PostMapping("/agent-sessions") @Transactional public Map<String,Object> createAgentSession(@RequestBody Map<String,Object> body) {
+        String capture=Objects.toString(body.getOrDefault("contentMarkdown",""),"").trim();
+        if(capture.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"contentMarkdown is required");
+        String selectedUseCase=normalizedUseCase(body.getOrDefault("useCase",useCase()));
+        Map<String,Object> activeEpic=activeEpic(selectedUseCase);
+        UUID recordId=UUID.randomUUID();
+        String title=Objects.toString(body.getOrDefault("title", selectedUseCase.equals("LEARNING") ? "학습 재료" : "경험 기록"),"").trim();
+        db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,?::jsonb)",recordId,userId(),title.isBlank()?"경험 기록":title,capture,json(body.getOrDefault("tags",List.of())));
+        UUID sessionId=UUID.randomUUID();
+        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",List.of(recordId.toString())); context.put("answers",new LinkedHashMap<>());
+        db.update("INSERT INTO agent_session(id,user_id,epic_id,use_case,state,context_json) VALUES (?,?,?,?,'INTERPRETING',?::jsonb)",sessionId,userId(),activeEpic.get("id"),selectedUseCase,json(context));
+        Map<String,Object> interpreted=interpretSession(sessionId,selectedUseCase,activeEpic,context);
+        return saveSessionResponse(sessionId,interpreted);
+    }
+
+    @GetMapping("/agent-sessions/{id}") public Map<String,Object> getAgentSession(@PathVariable UUID id) {
+        return sessionResponse(id);
+    }
+
+    @PostMapping("/agent-sessions/{id}/turns") @Transactional public Map<String,Object> agentTurn(@PathVariable UUID id,@RequestBody Map<String,Object> body) {
+        Map<String,Object> session=sessionRow(id);
+        Map<String,Object> context=parseObject(session.get("context"));
+        Map<String,Object> answers=parseObject(context.get("answers"));
+        String cardId=Objects.toString(body.getOrDefault("cardId",""),"").trim();
+        if(cardId.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"cardId is required");
+        answers.put(cardId,body.getOrDefault("value",body.getOrDefault("action","")));
+        context.put("answers",answers);
+        String selectedUseCase=normalizedUseCase(session.get("useCase"));
+        Map<String,Object> activeEpic=activeEpic(selectedUseCase);
+        boolean ready=answers.containsKey("role") || answers.containsKey("learning-level");
+        ready=ready && answers.containsKey("source-check");
+        if(ready) {
+            Map<String,Object> proposalResult=generate(Map.of("epicId",Objects.toString(activeEpic.get("id"))));
+            List<?> proposals=(List<?>)proposalResult.getOrDefault("proposals",List.of());
+            if(!proposals.isEmpty()) {
+                Map<?,?> proposal=(Map<?,?>)proposals.get(0);
+                UUID proposalId=UUID.fromString(proposal.get("id").toString());
+                db.update("UPDATE agent_session SET state='PROPOSAL_PENDING',context_json=?::jsonb,approved_context_json=?::jsonb,proposal_id=?,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",json(context),json(context),proposalId,json(List.of(Map.of("type","PROPOSAL","id","proposal","title",proposal.get("title"),"value",proposal))),id,userId());
+                return sessionResponse(id);
+            }
+        }
+        Map<String,Object> interpreted=interpretSession(id,selectedUseCase,activeEpic,context);
+        db.update("UPDATE agent_session SET state=?,context_json=?::jsonb,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",interpreted.getOrDefault("state","NEEDS_INPUT"),json(context),json(interpreted.getOrDefault("cards",List.of())),id,userId());
+        return sessionResponse(id);
+    }
+
+    @PostMapping("/agent-sessions/{id}/approve") @Transactional public Map<String,Object> approveAgentSession(@PathVariable UUID id) {
+        Map<String,Object> session=sessionRow(id);
+        Object proposalId=session.get("proposalId");
+        if(proposalId==null) throw new ResponseStatusException(HttpStatus.CONFLICT,"No proposal is ready");
+        Map<String,Object> result=decision(UUID.fromString(proposalId.toString()),Map.of("action","ACCEPT"));
+        db.update("UPDATE agent_session SET state='APPROVED',updated_at=now() WHERE id=? AND user_id=?",id,userId());
+        return Map.of("sessionId",id,"state","APPROVED","result",result);
+    }
+
+    @PostMapping("/agent-sessions/{id}/reject") @Transactional public Map<String,Object> rejectAgentSession(@PathVariable UUID id,@RequestBody(required=false) Map<String,Object> body) {
+        Map<String,Object> session=sessionRow(id);
+        Object proposalId=session.get("proposalId");
+        if(proposalId!=null) decision(UUID.fromString(proposalId.toString()),Map.of("action","REJECT","reason",body==null?"":body.getOrDefault("reason","")));
+        db.update("UPDATE agent_session SET state='REJECTED',updated_at=now() WHERE id=? AND user_id=?",id,userId());
+        return Map.of("sessionId",id,"state","REJECTED");
     }
 
     @PostMapping("/agent/quest-proposals") @Transactional public Map<String,Object> generate(@RequestBody Map<String,String> body) {
         UUID epicId=UUID.fromString(body.get("epicId"));
-        Map<String,Object> e=db.queryForMap("SELECT id,title,completion_criteria FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId());
+        Map<String,Object> e=db.queryForMap("SELECT id,title,completion_criteria,use_case FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId());
+        String selectedUseCase=normalizedUseCase(e.get("use_case"));
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
-        List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL AND NOT (tags_json @> '[\"learning-note\"]'::jsonb) ORDER BY updated_at DESC LIMIT 20",userId());
+        String recordFilter=selectedUseCase.equals("LEARNING") ? "" : " AND NOT (tags_json @> '[\"learning-note\"]'::jsonb)";
+        List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL"+recordFilter+" ORDER BY updated_at DESC LIMIT 20",userId());
         List<Map<String,Object>> existingQuests=db.queryForList("SELECT title,description,status FROM quest WHERE user_id=? AND epic_id=? AND status IN ('TODO','IN_PROGRESS') ORDER BY created_at DESC LIMIT 20",userId(),epicId);
         List<Map<String,Object>> profileRows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
         Map<String,Object> profile=profileRows.isEmpty()?Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests","[]"):profileRows.get(0);
         try {
-            byte[] requestBody=json(Map.of("runId",runId.toString(),"userContext",Map.of("userId",userId(),"displayName",profile.get("displayName"),"occupation",profile.get("occupation"),"currentGoal",profile.get("currentGoal"),"experienceSummary",profile.get("experienceSummary"),"interests",parseJsonArray(profile.get("interests"))),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",existingQuests)).getBytes(StandardCharsets.UTF_8);
+            byte[] requestBody=json(Map.of("runId",runId.toString(),"useCase",selectedUseCase,"userContext",Map.of("userId",userId(),"displayName",profile.get("displayName"),"occupation",profile.get("occupation"),"currentGoal",profile.get("currentGoal"),"experienceSummary",profile.get("experienceSummary"),"interests",parseJsonArray(profile.get("interests"))),"epic",Map.of("id",epicId.toString(),"title",e.get("title"),"completionCriteria",e.get("completion_criteria")),"records",rs.stream().map(r->Map.of("id",r.get("id").toString(),"title",r.get("title"),"contentMarkdown",r.get("content_markdown"),"version",r.get("version"))).toList(),"existingQuests",existingQuests)).getBytes(StandardCharsets.UTF_8);
             HttpRequest agentRequest=HttpRequest.newBuilder(URI.create(agentBaseUrl+"/internal/v1/quest-proposals/generate"))
                     .header("Content-Type","application/json")
                     .header("X-Internal-Api-Key",apiKey)
@@ -135,6 +203,80 @@ public class ApiController {
         List<Map<String,Object>> rows=db.queryForList("SELECT id,run_id AS \"runId\",epic_id AS \"epicId\",title,description,rationale,steps_json::text AS steps,completion_criteria AS \"completionCriteria\",status FROM quest_proposal WHERE "+filterColumn+"=? ORDER BY created_at DESC",filterValue);
         rows.forEach(row->{ row.put("steps",stringList(row.get("steps"))); row.put("evidence",db.queryForList("SELECT pe.record_id AS \"recordId\",pe.record_version AS \"recordVersion\",pe.excerpt,r.title AS \"recordTitle\" FROM proposal_evidence pe JOIN record r ON r.id=pe.record_id WHERE pe.proposal_id=?",row.get("id"))); });
         return rows;
+    }
+
+    private String useCase() {
+        try { return normalizedUseCase(db.queryForObject("SELECT use_case FROM user_profile WHERE user_id=?",String.class,userId())); }
+        catch(Exception ignored) { return "CAREER"; }
+    }
+
+    private Map<String,Object> activeEpic(String selectedUseCase) {
+        List<Map<String,Object>> rows=db.queryForList("SELECT id,title,completion_criteria AS \"completionCriteria\",use_case AS \"useCase\" FROM epic WHERE user_id=? AND status='ACTIVE' AND use_case=? ORDER BY created_at LIMIT 1",userId(),selectedUseCase);
+        if(rows.isEmpty()) {
+            String title=selectedUseCase.equals("LEARNING")?"개인 학습 로드맵 생성":"경력기술서 초안 완성";
+            String criteria=selectedUseCase.equals("LEARNING")?"학습 목표와 현재 수준에 맞는 실행 가능한 학습 단계를 정리한다.":"프로젝트별 역할, 문제 해결 과정, 실행한 행동과 검증 가능한 성과를 원본 경험 기록에 근거해 경력기술서 초안으로 정리한다.";
+            db.update("INSERT INTO epic(user_id,title,completion_criteria,use_case) VALUES (?,?,?,?)",userId(),title,criteria,selectedUseCase);
+            rows=db.queryForList("SELECT id,title,completion_criteria AS \"completionCriteria\",use_case AS \"useCase\" FROM epic WHERE user_id=? AND status='ACTIVE' AND use_case=? ORDER BY created_at DESC LIMIT 1",userId(),selectedUseCase);
+        }
+        return rows.get(0);
+    }
+
+    private Map<String,Object> interpretSession(UUID sessionId,String selectedUseCase,Map<String,Object> activeEpic,Map<String,Object> context) {
+        List<String> ids=((List<?>)context.getOrDefault("recordIds",List.of())).stream().map(Object::toString).toList();
+        List<Map<String,Object>> records=db.queryForList("SELECT id,title,content_markdown AS \"contentMarkdown\",version FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 20",userId()).stream().filter(record -> ids.contains(record.get("id").toString())).toList();
+        Map<String,Object> payload=new LinkedHashMap<>(); payload.put("sessionId",sessionId.toString()); payload.put("useCase",selectedUseCase); payload.put("userContext",profile()); payload.put("records",records); payload.put("answers",context.getOrDefault("answers",Map.of()));
+        try {
+            HttpRequest request=HttpRequest.newBuilder(URI.create(agentBaseUrl+"/internal/v1/agent-sessions/interpret"))
+                    .header("Content-Type","application/json").header("X-Internal-Api-Key",apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(json(payload),StandardCharsets.UTF_8)).build();
+            HttpResponse<String> response=agent.send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if(response.statusCode()<200 || response.statusCode()>=300) throw new IllegalStateException("Agent interpret returned HTTP "+response.statusCode());
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(response.body(),Map.class);
+        } catch(Exception ex) { throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"Agent conversation failed",ex); }
+    }
+
+    private Map<String,Object> saveSessionResponse(UUID sessionId,Map<String,Object> interpreted) {
+        String state=Objects.toString(interpreted.getOrDefault("state","NEEDS_INPUT"),"NEEDS_INPUT");
+        db.update("UPDATE agent_session SET state=?,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",state,json(interpreted.getOrDefault("cards",List.of())),sessionId,userId());
+        return sessionResponse(sessionId);
+    }
+
+    private Map<String,Object> sessionResponse(UUID id) {
+        Map<String,Object> row=sessionRow(id);
+        Map<String,Object> result=new LinkedHashMap<>(); result.put("sessionId",row.get("id")); result.put("useCase",row.get("useCase")); result.put("state",row.get("state"));
+        Map<String,Object> npc=new LinkedHashMap<>(); npc.put("name","리콜 가이드"); npc.put("message",row.get("message")); result.put("npc",npc);
+        result.put("cards",parseJsonValue(row.get("cards"),List.of()));
+        if(row.get("proposalId")!=null) result.put("proposalId",row.get("proposalId"));
+        return result;
+    }
+
+    private Map<String,Object> sessionRow(UUID id) {
+        try {
+            Map<String,Object> row=db.queryForMap("SELECT id,use_case AS \"useCase\",state,context_json::text AS context,pending_cards_json::text AS cards,proposal_id AS \"proposalId\" FROM agent_session WHERE id=? AND user_id=?",id,userId());
+            List<?> cards=(List<?>)parseJsonValue(row.get("cards"),List.of());
+            String message=cards.isEmpty()?"계속해서 경험을 정리해볼게요.":Objects.toString(((Map<?,?>)cards.get(0)).get("title"),"");
+            row.put("message",message); return row;
+        } catch(Exception ex) { throw new NotFoundException(); }
+    }
+
+    private static Map<String,Object> parseObject(Object value) {
+        if(value instanceof Map<?,?> map) { Map<String,Object> result=new LinkedHashMap<>(); map.forEach((k,v)->result.put(Objects.toString(k),v)); return result; }
+        if(value==null || value.toString().isBlank()) return new LinkedHashMap<>();
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(value.toString(),new com.fasterxml.jackson.core.type.TypeReference<Map<String,Object>>(){}); }
+        catch(Exception ex) { return new LinkedHashMap<>(); }
+    }
+
+    private static Object parseJsonValue(Object value,Object fallback) {
+        if(value==null) return fallback;
+        if(value instanceof Collection<?> || value instanceof Map<?,?>) return value;
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(value.toString(),Object.class); }
+        catch(Exception ex) { return fallback; }
+    }
+
+    private static String normalizedUseCase(Object value) {
+        String result=Objects.toString(value,"CAREER").trim().toUpperCase(Locale.ROOT);
+        if(!Set.of("CAREER","LEARNING").contains(result)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"useCase must be CAREER or LEARNING");
+        return result;
     }
     private Map<String,Object> record(UUID id) { try { return db.queryForMap("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,version,created_at AS \"createdAt\" FROM record WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId()); } catch(Exception e) { throw new NotFoundException(); } }
     private static String required(Map<String,Object>b,String k) { Object v=b.get(k); if(v==null||v.toString().isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,k+" is required"); return v.toString(); }
