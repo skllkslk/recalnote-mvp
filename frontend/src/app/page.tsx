@@ -8,23 +8,22 @@ type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "stu
 type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; version: number; createdAt: string }
 type Epic = { id: string; title: string; completionCriteria: string; useCase?: "CAREER" | "LEARNING" }
 type Evidence = { recordId: string; recordVersion: number; excerpt: string; recordTitle: string }
-type Proposal = { id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
-type Quest = { id: string; epicId: string; title: string; description: string; steps: string[]; completionCriteria: string; status: string; recordIds?: string[] }
-type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string }
+type Proposal = { epicId?: string; resultMarkdown?: string; id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
+type Quest = { resultMarkdown?: string; id: string; epicId: string; title: string; description: string; steps: string[]; completionCriteria: string; status: string; recordIds?: string[] }
+type EditedQuest = { title: string; description: string; steps: string[]; completionCriteria: string; resultMarkdown?: string }
 type CareerFields = { summary: string; project: string; period: string; role: string; challenge: string; actions: string; outcome: string }
 const emptyCareerFields: CareerFields = { summary: "", project: "", period: "", role: "", challenge: "", actions: "", outcome: "" }
-type PlayerProfile = { displayName: string; occupation: string; currentGoal: string; experienceSummary: string; interests: string[]; useCase: "CAREER" | "LEARNING" }
+type PlayerProfile = { onboardingCompleted?: boolean; displayName: string; occupation: string; currentGoal: string; experienceSummary: string; interests: string[]; useCase: "CAREER" | "LEARNING" }
 type AgentCardOption = { id: string; label: string; requiresText?: boolean }
 type AgentCard = { type: string; id: string; title: string; options?: AgentCardOption[]; allowFreeText?: boolean; value?: unknown; sourceRefs?: Evidence[] }
 type AgentSession = { sessionId: string; useCase: "CAREER" | "LEARNING"; state: string; npc: { name: string; message: string }; cards: AgentCard[]; proposalId?: string }
 const emptyPlayerProfile: PlayerProfile = { displayName: "", occupation: "", currentGoal: "", experienceSummary: "", interests: [], useCase: "CAREER" }
 const nav: { id: Page; label: string; icon: string }[] = [
   { id: "home", label: "홈", icon: "⌂" },
+  { id: "profile", label: "Epic 선택", icon: "◎" },
+  { id: "agent", label: "NPC 대화", icon: "✦" },
+  { id: "quests", label: "결과물", icon: "◇" },
   { id: "archive", label: "내 경험", icon: "▤" },
-  { id: "quests", label: "작성 단계", icon: "◇" },
-  { id: "studio", label: "경력기술서", icon: "▧" },
-  { id: "learning", label: "학습 노트", icon: "✎" },
-  { id: "world", label: "기억 지도", icon: "◎" },
 ]
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -76,11 +75,12 @@ function ProposalReviewCard({ proposal, busy, onReject, onAccept, onOpenRecord }
   const [description, setDescription] = useState(proposal.description)
   const [steps, setSteps] = useState(proposal.steps?.length ? proposal.steps : ["", ""])
   const [criteria, setCriteria] = useState(proposal.completionCriteria ?? "")
+  const [resultMarkdown, setResultMarkdown] = useState(proposal.resultMarkdown ?? "")
   const canAccept = title.trim() && description.trim() && criteria.trim() && steps.length >= 2 && steps.length <= 5 && steps.every(step => step.trim())
 
   return <article className="proposal-card">
-    <div className="proposal-topline"><span className="status-pill pending">검토 대기</span><span className="eyebrow">경력기술서 작성 단계 제안</span></div>
-    <label className="field-label">퀘스트 제목<input value={title} onChange={event => setTitle(event.target.value)} /></label>
+    <label className="field-label">결과물 본문<textarea rows={12} value={resultMarkdown} onChange={event => setResultMarkdown(event.target.value)} /></label><div className="proposal-topline"><span className="status-pill pending">검토 대기</span><span className="eyebrow">결과물 제안</span></div>
+    <label className="field-label">결과물 제목<input value={title} onChange={event => setTitle(event.target.value)} /></label>
     <label className="field-label">목표<textarea rows={2} value={description} onChange={event => setDescription(event.target.value)} /></label>
     <div className="plan-editor"><div className="plan-heading"><strong>실행 단계</strong>{steps.length < 5 && <button className="inline-action" type="button" onClick={() => setSteps(current => [...current, ""])}>＋ 단계 추가</button>}</div>
       <ol>{steps.map((step, index) => <li key={index}><input aria-label={`실행 단계 ${index + 1}`} value={step} onChange={event => setSteps(current => current.map((item, i) => i === index ? event.target.value : item))} /><button className="icon-action remove-action" type="button" aria-label={`단계 ${index + 1} 삭제`} onClick={() => setSteps(current => current.length > 2 ? current.filter((_, i) => i !== index) : current.map((item, i) => i === index ? "" : item))}>×</button></li>)}</ol>
@@ -90,7 +90,7 @@ function ProposalReviewCard({ proposal, busy, onReject, onAccept, onOpenRecord }
     <div className="evidence-box"><div className="plan-heading"><strong>연결된 근거</strong><span>{proposal.evidence?.length ?? 0}개</span></div>
       {proposal.evidence?.length ? proposal.evidence.map(item => <button className="evidence-row" key={item.recordId} type="button" onClick={() => onOpenRecord(item.recordId)}><span className="evidence-title">{item.recordTitle}<small>기록 버전 {item.recordVersion}</small></span><blockquote>{item.excerpt}</blockquote><span className="evidence-open">기록 보기 →</span></button>) : <p className="muted-copy">연결된 근거가 없습니다.</p>}
     </div>
-    <div className="card-actions"><button className="button secondary" disabled={busy} onClick={() => onReject(proposal)}>거절</button><button className="button primary" disabled={busy || !canAccept} onClick={() => onAccept(proposal, { title: title.trim(), description: description.trim(), steps: steps.map(step => step.trim()), completionCriteria: criteria.trim() })}>수정 후 수락</button></div>
+    <div className="card-actions"><button className="button secondary" disabled={busy} onClick={() => onReject(proposal)}>거절</button><button className="button primary" disabled={busy || !canAccept} onClick={() => onAccept(proposal, { title: title.trim(), description: description.trim(), steps: steps.map(step => step.trim()), completionCriteria: criteria.trim(), resultMarkdown: resultMarkdown.trim() })}>수정 후 수락</button></div>
   </article>
 }
 
@@ -146,6 +146,8 @@ export default function App() {
   const [agentCapture, setAgentCapture] = useState("")
   const [agentTitle, setAgentTitle] = useState("")
   const [agentFreeText, setAgentFreeText] = useState<Record<string, string>>({})
+  const [captureFields, setCaptureFields] = useState<Record<string, string>>({})
+  const [reviewMarkdown, setReviewMarkdown] = useState("")
   const [agentBusy, setAgentBusy] = useState(false)
 
   async function refresh() {
@@ -157,18 +159,27 @@ export default function App() {
       ])
       setRecords(recordRows.map(record => ({ ...record, tags: normalizeTags(record.tags) })))
       setEpic(activeEpic)
-      setProposals(proposalRows)
-      setQuests(questRows)
+      setProposals(proposalRows.filter(row => row.epicId === activeEpic.id))
+      setQuests(questRows.filter(row => row.epicId === activeEpic.id))
       setProfile(playerProfile)
+      if (!playerProfile.onboardingCompleted) setPage("profile")
       setProfileInterests(playerProfile.interests.join(", "))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "데이터를 불러오지 못했습니다.")
     } finally { setLoading(false) }
   }
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    void refresh()
+    void request<Partial<AgentSession>>("/agent-sessions/latest").then(session => {
+      if (session.sessionId) setAgentSession(session as AgentSession)
+    }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    const value = agentSession?.cards.find(card => card.type === "PROPOSAL")?.value as Proposal | undefined
+    setReviewMarkdown(value?.resultMarkdown ?? "")
+  }, [agentSession])
 
   const pending = proposals.filter(item => item.status === "PENDING")
-  const completed = proposals.filter(item => item.status !== "PENDING")
   const experienceRecords = records.filter(record => !record.tags?.includes("learning-note"))
   const learningNotes = records.filter(record => record.tags?.includes("learning-note"))
   const searchResults = useMemo(() => {
@@ -184,13 +195,13 @@ export default function App() {
     { title: "경력기술서 문장을 간결하게 다듬기", copy: "상황보다 행동과 결과가 잘 드러나도록 문장을 줄이는 연습을 해보세요." },
   ]
   const careerStages = [
-    { title: "경험 기록 모으기", complete: experienceRecords.length > 0 },
-    { title: "근거 기록 연결", complete: quests.some(quest => Boolean(quest.recordIds?.length)) || studioRecordIds.length > 0 },
-    { title: "경력기술서 초안", complete: Boolean(draft) },
+    { title: "Epic 선택과 입력", complete: Boolean(profile.onboardingCompleted) },
+    { title: "NPC 대화 · 사실 확인", complete: Boolean(agentSession?.proposalId) || quests.length > 0 },
+    { title: "결과물 검토 및 승인", complete: quests.length > 0 },
   ]
   const completedCareerStages = careerStages.filter(stage => stage.complete).length
-  const nextAction = !experienceRecords.length ? "NPC와 경험 정리 시작하기" : pending.length ? "AI 제안 검토하기" : !quests.length ? "NPC에게 다음 단계 묻기" : !draft ? "초안 작성 이어가기" : "초안 다듬기"
-  const nextActionHint = !experienceRecords.length ? "자유롭게 경험을 들려주면 리콜 가이드가 함께 정리합니다." : pending.length ? "원본 근거를 확인하고 다음 단계를 승인해 주세요." : !quests.length ? "기록을 바탕으로 다음 작성 또는 학습 단계를 만들어볼게요." : !draft ? "기록에 연결된 작성 단계를 열어 초안을 만드세요." : "문장과 원본 근거를 확인하고 필요한 부분을 보완하세요."
+  const nextAction = !profile.onboardingCompleted ? "Epic을 선택해 주세요" : agentSession?.state === "PROPOSAL_PENDING" ? "결과물을 검토해 주세요" : agentSession ? "리콜 가이드가 기다리고 있어요" : "새로운 결과물을 만들어볼까요?"
+  const nextActionHint = "경력기술서 또는 학습 로드맵을 선택하고, 편하게 입력한 뒤 NPC와 내용을 확인하세요. 마지막 승인은 직접 결정합니다."
 
 
   function openNewRecord() {
@@ -275,21 +286,24 @@ export default function App() {
     event.preventDefault(); setBusy(true); setError("")
     try {
       const saved = await request<PlayerProfile>("/users/me/profile", { method: "PUT", body: JSON.stringify({ ...profile, interests: profileInterests.split(",").map(item => item.trim()).filter(Boolean) }) })
-      setProfile(saved); setProfileInterests(saved.interests.join(", ")); setNotice("모험가 프로필을 저장했습니다.")
+      setProfile(saved); setProfileInterests(saved.interests.join(", ")); setNotice("Epic을 선택했습니다. 편한 방식으로 내용을 입력해 주세요."); setCaptureFields({}); setAgentCapture(""); setAgentTitle(""); setAgentFreeText({}); setAgentSession(null); setPage("agent"); await refresh()
     } catch (cause) { setError(cause instanceof Error ? cause.message : "프로필을 저장하지 못했습니다.") }
     finally { setBusy(false) }
   }
 
   function openAgent() {
-    setAgentSession(null); setAgentCapture(""); setAgentTitle(""); setAgentFreeText({}); setPage("agent")
+    if (!profile.onboardingCompleted) { setPage("profile"); return }
+    setPage("agent")
   }
 
   async function startAgentSession(event: FormEvent) {
     event.preventDefault()
-    if (!agentCapture.trim()) return
+    const structured = Object.entries(captureFields).filter(([, value]) => value.trim()).map(([label, value]) => `## ${label}\n${value.trim()}`).join("\n\n")
+    const capture = [structured, agentCapture.trim()].filter(Boolean).join("\n\n")
+    if (!capture) return
     setAgentBusy(true); setError("")
     try {
-      const session = await request<AgentSession>("/agent-sessions", { method: "POST", body: JSON.stringify({ useCase: profile.useCase, title: agentTitle.trim(), contentMarkdown: agentCapture.trim() }) })
+      const session = await request<AgentSession>("/agent-sessions", { method: "POST", body: JSON.stringify({ useCase: profile.useCase, title: agentTitle.trim() || (captureFields["프로젝트 / 경험"] || captureFields["배우고 싶은 주제"] || "").split("\n")[0], contentMarkdown: capture }) })
       setAgentSession(session); await refresh(); setNotice("NPC가 경험을 정리하기 시작했습니다.")
     } catch (cause) { setError(cause instanceof Error ? cause.message : "대화를 시작하지 못했습니다.") }
     finally { setAgentBusy(false) }
@@ -308,15 +322,25 @@ export default function App() {
   async function approveAgentSession() {
     if (!agentSession) return
     setAgentBusy(true); setError("")
-    try { await request(`/agent-sessions/${agentSession.sessionId}/approve`, { method: "POST" }); await refresh(); setNotice("승인한 결과를 작성 단계에 추가했습니다."); setPage("quests") }
+    try { await request(`/agent-sessions/${agentSession.sessionId}/approve`, { method: "POST", body: JSON.stringify({ editedResultMarkdown: reviewMarkdown }) }); setAgentSession(null); await refresh(); setNotice("결과물을 승인하고 저장했습니다."); setPage("quests") }
     catch (cause) { setError(cause instanceof Error ? cause.message : "결과를 승인하지 못했습니다.") }
+    finally { setAgentBusy(false) }
+  }
+  async function rejectAgentResult() {
+    if (!agentSession) return
+    setAgentBusy(true); setError("")
+    try {
+      await request(`/agent-sessions/${agentSession.sessionId}/reject`, { method: "POST", body: JSON.stringify({ reason: "사용자 거절" }) })
+      setAgentSession(null); await refresh(); setNotice("제안을 거절했습니다. 내용을 바꿔 다시 시작할 수 있어요.")
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "거절하지 못했습니다.") }
     finally { setAgentBusy(false) }
   }
   async function decide(proposal: Proposal, action: "ACCEPT_EDITED" | "REJECT", edited?: EditedQuest) {
     setBusy(true)
     try {
-      await request(`/quest-proposals/${proposal.id}/decisions`, { method: "POST", body: JSON.stringify({ action, ...(edited ? { editedTitle: edited.title, editedDescription: edited.description, editedSteps: edited.steps, editedCompletionCriteria: edited.completionCriteria } : {}) }) })
-      await refresh(); setNotice(action === "REJECT" ? "제안을 거절했습니다." : "경력기술서 작성 단계에 추가했습니다.")
+      await request(`/quest-proposals/${proposal.id}/decisions`, { method: "POST", body: JSON.stringify({ action, ...(edited ? { editedTitle: edited.title, editedDescription: edited.description, editedSteps: edited.steps, editedCompletionCriteria: edited.completionCriteria, editedResultMarkdown: edited.resultMarkdown } : {}) }) })
+      if (agentSession?.proposalId === proposal.id) setAgentSession(null)
+      await refresh(); setNotice(action === "REJECT" ? "제안을 거절했습니다." : "결과물을 승인하고 저장했습니다.")
     } catch (cause) { setError(cause instanceof Error ? cause.message : "제안을 처리하지 못했습니다.") }
     finally { setBusy(false) }
   }
@@ -324,14 +348,14 @@ export default function App() {
     if (!selectedQuest) return
     const sources = experienceRecords.filter(record => studioRecordIds.includes(record.id))
     const project = careerFields.project.trim() || sources[0]?.projectName || sources[0]?.tags?.find(tag => tag.startsWith("project:"))?.slice(8) || "[프로젝트명]"
-    const actions = careerFields.actions.trim() || selectedQuest.steps.map((step, index) => `${index + 1}. ${step}`).join("\n") || "[내가 직접 실행한 행동]"
+    const actions = careerFields.actions.trim() || "[확인 필요: 내가 직접 실행한 행동]"
     const text = [
       "# 경력기술서 초안", "", `## ${project}`, "",
       "### 한 줄 성과", `> ${careerFields.summary.trim() || "[문제나 목표]를 해결하기 위해 [핵심 행동]을 수행해 [검증 가능한 결과]를 만들었습니다."}`, "",
       "### 프로젝트 정보", `- 기간: ${careerFields.period.trim() || "[시작 시점 – 종료 시점]"}`, `- 역할: ${careerFields.role.trim() || "[담당한 책임과 협업 범위]"}`, "",
       "### 문제와 목표", careerFields.challenge.trim() || selectedQuest.description || "[당시 상황과 해결해야 했던 문제]", "",
       "### 실행한 일", actions, "",
-      "### 결과와 검증", careerFields.outcome.trim() || selectedQuest.completionCriteria || "[결과와 이를 확인한 방법]", "",
+      "### 결과와 검증", careerFields.outcome.trim() || "[결과와 이를 확인한 방법]", "",
       "### 근거가 된 원본 기록", ...sources.map(record => `#### ${record.title}\n> ${record.contentMarkdown.slice(0, 1600).replace(/\n/g, "\n> ")}`), "",
       "<!-- 원본 기록으로 확인되지 않는 수치나 사실은 추가하지 말고, 대괄호 항목을 실제 경험에 맞게 보완하세요. -->",
     ].join("\n")
@@ -374,28 +398,32 @@ export default function App() {
         {!agentSession ? <form className="agent-capture-card" onSubmit={startAgentSession}>
           <div className="npc-avatar"><PlayerSprite /></div>
           <div className="npc-bubble"><p className="eyebrow">리콜 가이드</p><h2>{profile.useCase === "LEARNING" ? "무엇을 배우고 싶나요?" : "어떤 경험을 정리해볼까요?"}</h2><p>{profile.useCase === "LEARNING" ? "배우고 싶은 주제와 지금 알고 있는 내용을 편하게 적어주세요." : "문제, 내가 한 일, 결과를 완벽한 형식 없이 자유롭게 들려주세요."}</p></div>
+          <p className="eyebrow">02 · 자유 입력</p><p className="muted-copy">아는 항목만 채워도 괜찮아요. 아래 양식과 자유 입력을 함께 쓰거나 하나만 사용하세요.</p>
+          <div className="career-template-grid">{(profile.useCase === "LEARNING" ? ["배우고 싶은 주제", "현재 수준", "학습 목표", "주당 학습 가능 시간", "원하는 결과물"] : ["프로젝트 / 경험", "기간", "내 역할", "문제와 목표", "내가 한 행동", "결과와 확인 방법"]).map(label => <label className="field-label" key={label}>{label}<textarea rows={2} value={captureFields[label] ?? ""} onChange={event => setCaptureFields(current => ({ ...current, [label]: event.target.value }))} placeholder="선택 사항 · 자유롭게 적어주세요" /></label>)}</div>
           <label className="field-label">제목 <span className="label-hint">선택 사항</span><input value={agentTitle} onChange={event => setAgentTitle(event.target.value)} placeholder={profile.useCase === "LEARNING" ? "예: Spring Security 학습" : "예: 협력사 권한 오류 수정"} /></label>
-          <label className="field-label">{profile.useCase === "LEARNING" ? "학습 재료" : "경험 이야기"}<textarea className="large-textarea" rows={10} value={agentCapture} onChange={event => setAgentCapture(event.target.value)} placeholder={profile.useCase === "LEARNING" ? "배우고 싶은 것, 현재 수준, 프로젝트에서 막힌 부분을 자유롭게 적어주세요." : "어떤 문제가 있었고, 내가 무엇을 했으며, 결과를 어떻게 확인했는지 자유롭게 적어주세요."} required /></label>
-          <div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>나중에 하기</button><button type="submit" className="button primary" disabled={agentBusy || !agentCapture.trim()}>{agentBusy ? "대화 준비 중…" : "NPC와 정리 시작하기 →"}</button></div>
+          <label className="field-label">{profile.useCase === "LEARNING" ? "학습 재료" : "경험 이야기"}<textarea className="large-textarea" rows={6} value={agentCapture} onChange={event => setAgentCapture(event.target.value)} placeholder={profile.useCase === "LEARNING" ? "배우고 싶은 것, 현재 수준, 프로젝트에서 막힌 부분을 자유롭게 적어주세요." : "어떤 문제가 있었고, 내가 무엇을 했으며, 결과를 어떻게 확인했는지 자유롭게 적어주세요."} /></label>
+          <div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>나중에 하기</button><button type="submit" className="button primary" disabled={agentBusy || (!agentCapture.trim() && !Object.values(captureFields).some(value => value.trim()))}>{agentBusy ? "대화 준비 중…" : "NPC와 정리 시작하기 →"}</button></div>
         </form> : <section className="agent-dialogue-card">
           <div className="agent-dialogue-header"><div className="npc-avatar small"><PlayerSprite /></div><div><p className="eyebrow">리콜 가이드</p><strong>{agentSession.npc.message}</strong></div><span className="status-pill active">{agentSession.state === "PROPOSAL_PENDING" ? "결과 확인" : "대화 중"}</span></div>
           <div className="agent-card-list">{agentSession.cards.map(card => <article className={`agent-card agent-card-${card.type.toLowerCase()}`} key={card.id}><p className="eyebrow">{card.type === "EVIDENCE" ? "원본 근거 확인" : card.type === "PROPOSAL" ? "AI 제안" : "확인할 내용"}</p><h2>{card.title}</h2>{card.type === "PROPOSAL" && card.value != null && typeof card.value === "object" && <div className="agent-proposal-preview"><strong>{String((card.value as Record<string, unknown>).title ?? "")}</strong><p>{String((card.value as Record<string, unknown>).description ?? "")}</p><ol>{Array.isArray((card.value as Record<string, unknown>).steps) && ((card.value as Record<string, unknown>).steps as unknown[]).map((step, index) => <li key={index}>{String(step)}</li>)}</ol><p className="completion-box"><strong>완료 기준</strong><br />{String((card.value as Record<string, unknown>).completionCriteria ?? "")}</p></div>}
+              {card.type === "CONFIRMATION" && <pre className="record-body">{String(card.value ?? "")}</pre>}
               {card.type === "EVIDENCE" && <><blockquote>{String(card.value ?? "")}</blockquote>{card.sourceRefs?.map(source => <small key={`${source.recordId}-${source.recordVersion}`}>원본 기록 v{source.recordVersion}</small>)}</>}
-              {card.type !== "PROPOSAL" && <div className="agent-card-options">{card.options?.map(option => <button className="button secondary" key={option.id} disabled={agentBusy} onClick={() => void answerAgentCard(card, agentFreeText[card.id] && option.requiresText ? agentFreeText[card.id] : option.id)}>{option.label}</button>)}</div>}
-              {card.allowFreeText && <div className="agent-free-text"><input value={agentFreeText[card.id] ?? ""} onChange={event => setAgentFreeText(current => ({ ...current, [card.id]: event.target.value }))} placeholder="직접 입력할 내용" /><button className="button primary" disabled={agentBusy || !agentFreeText[card.id]?.trim()} onClick={() => void answerAgentCard(card, agentFreeText[card.id].trim())}>답변 보내기</button></div>}
-              {card.type === "PROPOSAL" && <div className="form-actions"><button className="button secondary" disabled={agentBusy} onClick={() => setPage("home")}>나중에 확인</button><button className="button primary" disabled={agentBusy} onClick={() => void approveAgentSession()}>이 결과 승인하기</button></div>}
+              {card.type !== "PROPOSAL" && <div className="agent-card-options">{card.options?.map(option => <button className="button secondary" key={option.id} disabled={agentBusy || (option.requiresText && !agentFreeText[card.id]?.trim())} onClick={() => void answerAgentCard(card, agentFreeText[card.id] && option.requiresText ? agentFreeText[card.id].trim() : option.id)}>{option.label}</button>)}</div>}
+              {card.allowFreeText && <div className="agent-free-text"><textarea rows={4} value={agentFreeText[card.id] ?? ""} onChange={event => setAgentFreeText(current => ({ ...current, [card.id]: event.target.value }))} placeholder="직접 입력할 내용" /><button className="button primary" disabled={agentBusy || !agentFreeText[card.id]?.trim()} onClick={() => void answerAgentCard(card, agentFreeText[card.id].trim())}>답변 보내기</button></div>}
+              {card.type === "PROPOSAL" && <><label className="field-label">결과물 · Markdown 편집<textarea className="draft-editor" rows={18} value={reviewMarkdown} onChange={event => setReviewMarkdown(event.target.value)} /></label><p className="muted-copy">원본과 내용을 확인해 주세요. 승인하면 편집한 결과물이 저장됩니다.</p><div className="form-actions"><button className="button secondary" disabled={agentBusy} onClick={() => setPage("home")}>보류</button><button className="button secondary" disabled={agentBusy} onClick={() => void rejectAgentResult()}>거절하고 다시 입력</button><button className="button primary" disabled={agentBusy || !reviewMarkdown.trim()} onClick={() => void approveAgentSession()}>이 결과 승인하기</button></div></>}
+
             </article>)}</div>
         </section>}
       </main>}
       {page === "profile" && <main className="page inner-page profile-page">
-        <div className="page-title"><div><p className="eyebrow">PLAYER PROFILE</p><h1>모험가 정보</h1><p>프로필은 경력기술서 작성과 학습 제안을 개인화하는 데 사용됩니다.</p></div></div>
+        <div className="page-title"><div><p className="eyebrow">PLAYER PROFILE</p><h1>첫 모험의 Epic을 선택하세요</h1><p>프로필은 경력기술서 작성과 학습 제안을 개인화하는 데 사용됩니다.</p></div></div>
         <div className="profile-layout">
           <section className="profile-character-card"><span className="profile-level">LV. {String(completedCareerStages + 1).padStart(2, "0")}</span><div className="profile-character-scene"><PlayerSprite /><span className="profile-class">MEMORY ALCHEMIST</span></div><div className="profile-character-stats"><span><small>경험 기록</small><b>{experienceRecords.length}</b></span><span><small>학습 노트</small><b>{learningNotes.length}</b></span><span><small>작성 단계</small><b>{quests.length}</b></span></div><div className="profile-xp"><div><small>CAREER QUEST</small><b>{completedCareerStages}/{careerStages.length} 단계</b></div><i><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></div></section>
-          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="profile-form-intro">먼저 어떤 결과물을 만들지 선택해 주세요. 선택에 따라 NPC의 질문과 제안이 달라집니다.</p>
+          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="eyebrow">01 · EPIC 선택</p><p className="profile-form-intro">먼저 어떤 결과물을 만들지 선택해 주세요. 선택에 따라 NPC의 질문과 제안이 달라집니다.</p>
             <div className="use-case-picker"><button type="button" className={`use-case-option ${profile.useCase === "CAREER" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "CAREER" })}><strong>경력기술서 초안</strong><small>경험을 성과 중심의 문장과 작성 단계로 정리</small></button><button type="button" className={`use-case-option ${profile.useCase === "LEARNING" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "LEARNING" })}><strong>학습 로드맵</strong><small>경험과 목표를 다음 학습 단계로 연결</small></button></div>
             <label className="field-label">표시 이름<input value={profile.displayName} onChange={event => setProfile({ ...profile, displayName: event.target.value })} placeholder="예: 김리콜" /></label>
             {profile.useCase === "CAREER" ? <><label className="field-label">현재 역할<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 백엔드 개발자" /></label><label className="field-label">목표 직무 또는 작성 목적<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label><label className="field-label">경력 요약<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label><label className="field-label">관심 기술 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: Spring Boot, 접근성, 데이터" /></label></> : <><label className="field-label">현재 학습 수준<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 기본 개념을 아는 초급" /></label><label className="field-label">학습 목표<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 실제 프로젝트에 적용하기" /></label><label className="field-label">배우고 싶은 주제<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="어떤 주제를 어떤 이유로 배우고 싶은지 적어보세요." /></label><label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 보안, 테스트, 시스템 설계" /></label></>}
-            <p className="profile-ai-note">이 정보는 AI 제안의 맥락으로만 사용됩니다. 경력 성과는 저장된 원본 기록으로 확인합니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></div>
+            <p className="profile-ai-note">이 정보는 AI 제안의 맥락으로만 사용됩니다. 경력 성과는 저장된 원본 기록으로 확인합니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "저장 중…" : "저장하고 입력 시작하기 →"}</button></div>
           </form>
         </div>
       </main>}
@@ -403,10 +431,10 @@ export default function App() {
         <section className="dashboard-search-section"><form className="search-bar dashboard-search" onSubmit={runSearch}><Icon>{"⌕"}</Icon><input value={query} onChange={event => setQuery(event.target.value)} placeholder="어떤 경험을 탐색할까요?" aria-label="기록 검색"/><button className="search-submit" type="submit">탐색 <span>→</span></button></form></section>
 
         <section className="career-journey-card">
-          <div className="career-journey-top"><div><p className="eyebrow">QUEST LOG · 01</p><h2>경력기술서 초안 완성</h2><p>{epic?.completionCriteria ?? "경험을 원본 근거와 함께 경력기술서로 정리합니다."}</p></div><span className="career-stage-count">{completedCareerStages}/{careerStages.length}<small>단계 완료</small></span></div>
+          <div className="career-journey-top"><div><p className="eyebrow">QUEST LOG · 01</p><h2>{profile.useCase === "LEARNING" ? "학습 로드맵 만들기" : "경력기술서 초안 만들기"}</h2><p>{epic?.completionCriteria ?? "경험을 원본 근거와 함께 경력기술서로 정리합니다."}</p></div><span className="career-stage-count">{completedCareerStages}/{careerStages.length}<small>단계 완료</small></span></div>
           <div className="career-progress-track" role="progressbar" aria-label="경력기술서 진행률" aria-valuemin={0} aria-valuemax={careerStages.length} aria-valuenow={completedCareerStages}><span style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></div>
           <div className="career-stage-list">{careerStages.map((stage, index) => <div className={`career-stage ${stage.complete ? "complete" : ""}`} key={stage.title}><i>{stage.complete ? "✓" : index + 1}</i><span>{stage.title}</span></div>)}</div>
-          <div className="career-next-action"><div><p className="eyebrow">NEXT STEP</p><strong>{nextAction}</strong><small>{nextActionHint}</small></div><button className="button primary" onClick={continueCareerDraft}>{nextAction}<span>→</span></button></div>
+          <div className="career-next-action"><div><p className="eyebrow">NEXT STEP</p><strong>{nextAction}</strong><small>{nextActionHint}</small></div><button className="button primary" onClick={openAgent}>{agentSession ? "NPC 대화 이어가기" : "NPC와 결과물 만들기"}<span>→</span></button></div>
           <div className="career-bonus-link"><span>{learningNotes.length ? `학습 노트 ${learningNotes.length}개 저장됨` : "선택 사항 · 학습한 내용도 남겨보세요"}</span><div className="career-utility-links"><button onClick={() => setPage("learning")}>학습 노트 열기 →</button><button onClick={() => setPage("world")}>기억 지도 →</button></div></div>
         </section>
         <section className="home-status-row" aria-label="작업 현황"><button onClick={() => setPage("archive")}><span className="status-pixel-icon">▤</span><span><small>경험 기록</small><strong>{experienceRecords.length}</strong></span><i>열기 →</i></button><button onClick={() => setPage("learning")}><span className="status-pixel-icon learning">✎</span><span><small>학습 노트</small><strong>{learningNotes.length}</strong></span><i>열기 →</i></button></section>
@@ -418,9 +446,10 @@ export default function App() {
 
       {page === "import" && <main className="page inner-page import-page"><button className="back-link" onClick={() => setPage("archive")}>← 기록 보관함</button><div className="page-title"><div><p className="eyebrow">ADD TO YOUR ARCHIVE</p><h1>기록 가져오기</h1><p>Markdown 원문을 보관함에 추가합니다. 원본 내용은 그대로 저장됩니다.</p></div></div><div className="import-tabs"><button className={importMode === "files" ? "selected" : ""} onClick={() => setImportMode("files")}>파일 가져오기</button><button className={importMode === "write" ? "selected" : ""} onClick={() => setImportMode("write")}>직접 입력</button></div><form className="import-panel" onSubmit={importMarkdown}><label className="field-label world-project-field">프로젝트 연결 <span className="label-hint">선택 사항 ? 파일은 모두 같은 프로젝트에 연결</span><input value={importProject} onChange={event => setImportProject(event.target.value)} placeholder="예: 정산 시스템" /></label>{importMode === "files" ? <><label className="drop-zone"><input type="file" accept=".md,text/markdown" multiple onChange={event => void filesChanged(event)} /><span className="drop-icon">↥</span><strong>Markdown 파일을 선택하세요</strong><small>여러 개의 .md 파일을 한 번에 가져올 수 있습니다.</small><span className="button secondary">파일 선택</span></label>{importFiles.length > 0 && <div className="selected-files"><div className="plan-heading"><strong>가져올 파일</strong><span>{importFiles.length}개</span></div>{importFiles.map(file => <div className="file-row" key={`${file.name}-${file.size}`}><span>▤</span><strong>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></div>)}</div>}</> : <><label className="field-label">제목<input value={importTitle} onChange={event => setImportTitle(event.target.value)} placeholder="예: 검색 전환 개선 회고" required /></label><label className="field-label">프로젝트 / 주제 태그 <span className="label-hint">쉼표로 구분</span><input value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="project:정산 시스템, 회고" /></label><label className="field-label">내용 <span className="label-hint">Markdown 지원</span><textarea className="large-textarea" value={importContent} onChange={event => setImportContent(event.target.value)} placeholder={"상황, 내가 한 일, 결과를 자유롭게 적어보세요.\n\n## 상황\n\n## 내가 한 일\n\n## 결과"} rows={12} required /></label></>}<div className="import-footnote"><span>ⓘ</span><p>가져온 내용은 원문 기록으로 저장됩니다. 구조화된 분석과 AI 제안은 이후 단계에서 별도로 검토할 수 있습니다.</p></div><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("archive")}>취소</button><button type="submit" className="button primary" disabled={busy || (importMode === "files" ? !importFiles.length : !importTitle.trim() || !importContent.trim())}>{busy ? "가져오는 중…" : importMode === "files" ? `${importFiles.length || ""}개 파일 가져오기` : "기록 저장"}</button></div></form></main>}
 
-      {page === "quests" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">CAREER STATEMENT · SUBQUESTS</p><h1>작성 단계</h1><p>상위 퀘스트: {epic?.title ?? "경력기술서 초안 완성"}</p></div><button className="button primary" disabled={!experienceRecords.length || busy} onClick={() => void generateProposal()}>{busy ? "제안 만드는 중…" : "✦ 기록에서 작성 단계 제안"}</button></div><section className="goal-banner"><span className="goal-icon">◎</span><div><p className="eyebrow">상위 퀘스트 · 경력기술서 작성</p><h2>{epic?.title ?? "경력기술서 초안 완성"}</h2><p>{epic?.completionCriteria ?? "프로젝트 경험과 검증 가능한 성과를 원본 기록에 근거해 정리합니다."}</p></div><span className="goal-count">{quests.length}<small>하위 단계</small></span></section><div className="board-section-head"><div><h2>진행 중인 작성 단계</h2><span>{quests.filter(q => q.status !== "DONE").length}개</span></div><button className="text-link" onClick={() => setPage("search")}>근거 기록 찾기 →</button></div>{quests.filter(q => q.status !== "DONE").length ? <div className="quest-grid">{quests.filter(q => q.status !== "DONE").map(quest => <article className="quest-card-large" key={quest.id}><div className="quest-card-top"><span className={`status-pill ${quest.status === "IN_PROGRESS" ? "active" : "todo"}`}>{quest.status === "IN_PROGRESS" ? "진행 중" : "시작 전"}</span><span>작성 단계</span></div><span className="quest-card-symbol">◇</span><h2>{quest.title}</h2><p className="quest-description">{quest.description}</p><div className="quest-plan"><strong>실행 단계</strong><ol>{quest.steps?.map((step, index) => <li key={index}>{step}</li>)}</ol></div><div className="completion-box"><strong>완료 기준</strong><p>{quest.completionCriteria || "완료 기준이 아직 지정되지 않았습니다."}</p></div><div className="quest-card-actions"><button className="text-link" onClick={() => { setStudioQuest(quest.id); setStudioRecordIds(quest.recordIds ?? []); setPage("studio") }}>경력기술서에 반영 →</button></div></article>)}</div> : <EmptyState icon="◇" title="아직 작성 단계가 없습니다" copy="경험 기록을 바탕으로 경력기술서 작성에 필요한 단계를 제안받으세요." action={<button className="button primary" disabled={!experienceRecords.length || busy} onClick={() => void generateProposal()}>{experienceRecords.length ? "작성 단계 제안 받기" : "먼저 경험 기록 가져오기"}</button>} />}
-        {pending.length > 0 && <section className="proposals-section"><div className="board-section-head"><div><h2>검토할 제안</h2><span>{pending.length}개</span></div><span className="section-aside">수락하기 전에 목표와 근거를 확인하세요.</span></div><div className="proposal-list">{pending.map(proposal => <ProposalReviewCard key={proposal.id} proposal={proposal} busy={busy} onReject={item => void decide(item, "REJECT")} onAccept={(item, edited) => void decide(item, "ACCEPT_EDITED", edited)} onOpenRecord={id => { const record = records.find(row => row.id === id); if (record) setSelectedRecord(record) }} />)}</div></section>}
-        {completed.length > 0 && <section className="completed-section"><div className="board-section-head"><div><h2>검토 완료</h2><span>{completed.length}개</span></div></div><div className="completed-list">{completed.slice(0, 6).map(item => <div className="completed-row" key={item.id}><span className={`completed-mark ${item.status === "ACCEPTED" ? "accepted" : "rejected"}`}>{item.status === "ACCEPTED" ? "✓" : "×"}</span><span><strong>{item.title}</strong><small>{item.description}</small></span><span className="status-pill">{item.status === "ACCEPTED" ? "수락됨" : "거절됨"}</span></div>)}</div></section>}
+      {page === "quests" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">03 · REVIEW & APPROVE</p><h1>결과물 검토 및 승인</h1><p>선택한 Epic: {epic?.title}</p></div><button className="button primary" onClick={openAgent}>{agentSession ? "NPC 대화 이어가기" : "새 결과물 만들기"}</button></div>
+        {agentSession?.state === "PROPOSAL_PENDING" && <div className="goal-banner"><p>NPC가 만든 결과물이 검토를 기다리고 있어요.</p><button className="button primary" onClick={() => setPage("agent")}>결과물 검토하기 →</button></div>}
+        <section className="proposals-section"><h2>검토할 제안</h2>{pending.map(proposal => <ProposalReviewCard key={proposal.id} proposal={proposal} busy={busy} onReject={item => void decide(item, "REJECT")} onAccept={(item, edited) => void decide(item, "ACCEPT_EDITED", edited)} onOpenRecord={id => { const record = records.find(row => row.id === id); if (record) setSelectedRecord(record) }} />)}</section>
+        <h2>승인한 결과물</h2>{quests.length ? <div className="quest-grid">{quests.map(quest => <article className="quest-card-large" key={quest.id}><span className="status-pill active">승인됨</span><h2>{quest.title}</h2><pre className="record-body">{quest.resultMarkdown || quest.description}</pre><details><summary>실행 단계와 완료 기준</summary><ol>{quest.steps.map((step, index) => <li key={index}>{step}</li>)}</ol><p>{quest.completionCriteria}</p></details><button className="button secondary" onClick={() => { const blob = new Blob([quest.resultMarkdown || quest.description], { type: "text/markdown;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "recallnote-result.md"; anchor.click(); URL.revokeObjectURL(url) }}>Markdown 내보내기</button></article>)}</div> : <EmptyState icon="◇" title="승인한 결과물이 없습니다" copy="NPC와 대화하고 결과물을 검토한 뒤 승인해 주세요." action={<button className="button primary" onClick={openAgent}>NPC 만나기 →</button>} />}
       </main>}
 
       {page === "learning" && <main className="page inner-page learning-page">
@@ -440,7 +469,7 @@ export default function App() {
 
     <nav className="inventory-dock" aria-label="게임 메뉴">
       <div className="inventory-heading"><span>INVENTORY</span><span>메뉴 · {nav.length} SLOTS</span></div>
-      <div className="icon-menu">{nav.map((item, index) => <button type="button" key={item.id} aria-current={page === item.id ? "page" : undefined} className={`icon-menu-item ${page === item.id ? "active" : ""}`} onClick={() => setPage(item.id)}><span className="slot-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span><span className="menu-icon" aria-hidden="true">{item.icon}</span><span className="menu-label">{item.label}</span>{item.id === "quests" && pending.length > 0 && <span className="menu-badge">{pending.length}</span>}</button>)}</div>
+      <div className="icon-menu">{nav.map((item, index) => <button type="button" key={item.id} aria-current={page === item.id ? "page" : undefined} className={`icon-menu-item ${page === item.id ? "active" : ""}`} onClick={() => item.id === "agent" ? openAgent() : setPage(item.id)}><span className="slot-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span><span className="menu-icon" aria-hidden="true">{item.icon}</span><span className="menu-label">{item.label}</span>{item.id === "quests" && pending.length > 0 && <span className="menu-badge">{pending.length}</span>}</button>)}</div>
     </nav>
 
     {recordDetail}

@@ -1,6 +1,15 @@
 # RecallNote MVP
 
-RecallNote turns saved work records into reviewable, actionable quest proposals. The implemented flow is:
+RecallNote turns freely entered experience into a reviewable career draft or learning roadmap. The primary MVP flow is:
+
+```text
+Profile / Epic selection (CAREER or LEARNING)
+  → optional structured fields + free text
+  → NPC dialogue: role / level → facts confirmation → evidence confirmation
+  → editable result review → approve or reject
+```
+
+Internally, Spring stores Record → Evidence → Proposal; approval atomically creates the Quest with the reviewed Markdown, evidence links, and a QuestEvent. A proposed Quest remains a Proposal until the person approves it. The Agent cannot approve or write these entities itself.
 
 ```text
 Next.js → Spring Boot → FastAPI Agent → Spring Boot/PostgreSQL → user review → Quest
@@ -11,13 +20,15 @@ Spring Boot (Java 17) is the public API and PostgreSQL is the source of truth. F
 ## Implemented MVP behavior
 
 - Create, list, view, update, and soft-delete Markdown records; read the active Epic.
-- Generate a proposal from the current user's profile, active Epic, recent records, and active quests.
-- Review the proposal's objective, 2–5 steps, completion criteria, rationale, and source-record evidence. Edit the plan before accepting, or reject it.
+- NPC sessions generate from the session's records and confirmed answers, together with profile, Epic, and existing quest context. The legacy direct generation endpoint still uses recent records.
+- Review and edit the generated Markdown result, objective, steps, completion criteria, rationale, and source evidence before approval; rejection creates no Quest.
 - On acceptance, persist the edited title, objective, steps, completion criteria, evidence links, and creation event. The quest board displays the structured plan.
 
 Proposal and quest steps are stored as JSONB; completion criteria are stored separately. Existing rows are preserved by Flyway migration V2.
 
-The default `AGENT_MODE=mock` exercises the full flow without a model key, but returns a predictable general verification and regression-prevention plan. `AGENT_MODE=openai` uses the Agents SDK and the supplied record context to create a more tailored proposal. Neither mode guarantees that every generated step is useful; review and edit proposals before accepting them.
+Flyway V6 adds onboarding completion and the `result_markdown` columns on proposals and quests. Existing quests remain readable. First-time users choose an Epic on the profile screen. Pending NPC sessions can be resumed after reload using `/api/v1/agent-sessions/latest`.
+
+The default `AGENT_MODE=mock` exercises the full flow without a model key and returns a deterministic draft template or learning roadmap. NPC questions and confirmation cards currently follow a fixed short flow. `AGENT_MODE=openai` uses the Agents SDK, session records, and confirmed answers to generate the final result. Review and edit generated facts before accepting them.
 
 ## Prerequisites
 
@@ -51,7 +62,7 @@ curl -X POST http://localhost:8080/api/v1/quest-proposals/<proposal-id>/decision
 curl http://localhost:8080/api/v1/quests
 ```
 
-`POST /api/v1/records` → Agent proposal generation → `PENDING` proposal storage → user review → `ACCEPT`, `ACCEPT_EDITED`, or `REJECT`. Acceptance stores the quest, evidence links, and creation event in one database transaction. Spring checks that evidence IDs belong to the current user and that record versions still match before storing evidence. It does not compare the excerpt text against the record body.
+`POST /api/v1/records` → Agent proposal generation → `PENDING` proposal storage → user review → `ACCEPT`, `ACCEPT_EDITED`, or `REJECT`. Acceptance stores the quest, evidence links, reviewed result body, and creation event in one database transaction. Spring validates evidence ownership, supplied record scope, version, and verbatim excerpts before storing evidence. Approval rejects changed or deleted source records.
 
 ## Stop and preserve data
 
@@ -78,6 +89,17 @@ Flyway migrations live in `backend/src/main/resources/db/migration`. Hibernate s
 - If credentials change after first startup, the existing named volume retains the old database credentials; recreate local data with `docker compose down -v` only if it is safe to discard.
 
 ## Developer documentation
+
+For isolated integration checks with mock generation:
+
+```powershell
+docker compose -p recallnote-flow-check -f compose.flow-test.yaml up --build -d
+# Wait for http://localhost:18081/actuator/health/readiness to report UP.
+python -m unittest discover -s tests -v
+docker compose -p recallnote-flow-check -f compose.flow-test.yaml down -v
+```
+
+This environment uses a separate disposable database and test-only credentials. It does not connect to the normal application's database. Run Agent unit tests from `agent/` with `python -m unittest discover -s tests -v`; run backend tests with JDK 17 and `mvn test`; run the frontend production build with `pnpm build`.
 
 - [Agent quest proposal contract](docs/agent-quest-contract.md) describes the Spring-to-Agent request/response schema, evidence checks, and mock/OpenAI behavior.
 - [Local development and MVP smoke flow](docs/local-development.md) covers Compose, the separate Next.js dev server, and one quest cycle.
