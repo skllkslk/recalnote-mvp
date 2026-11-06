@@ -55,19 +55,25 @@ class AgentFlowTest(unittest.TestCase):
         result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
         self.assertEqual(result["proposals"], [])
 
-    def test_openai_filters_stale_evidence_and_uses_selected_model(self):
+    def test_openai_resolves_selected_source_and_uses_selected_model(self):
         from agents import Agent
-        from app.main import ProposalOutput
+        from app.main import SourceSelectionOutput
         valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
         proposal = valid["proposals"][0]
-        proposal["evidence"].append({"recordId": "stale", "recordVersion": 1, "excerpt": "stale"})
-        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=ProposalOutput(proposals=[proposal])))
+        proposal.pop("evidence")
+        proposal["evidenceSourceIds"] = ["source-1-1", "unknown-source", "source-1-1"]
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[proposal])))
         with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-4.1-mini"}), \
              patch("agents.Runner.run", runner), patch("agents.Agent", wraps=Agent) as agent_class:
             result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
         self.assertEqual(agent_class.call_args.kwargs["model"], "gpt-4.1-mini")
         self.assertEqual(len(result["proposals"][0]["evidence"]), 1)
         self.assertEqual(result["proposals"][0]["resultMarkdown"], proposal["resultMarkdown"])
+        self.assertEqual(result["proposals"][0]["evidence"][0], {
+            "recordId": self.record["id"], "recordVersion": self.record["version"],
+            "excerpt": self.record["contentMarkdown"],
+        })
+        self.assertEqual(runner.await_count, 1)
 
     def test_openai_failure_logs_metadata_without_private_exception_text(self):
         runner = AsyncMock(side_effect=RuntimeError("private prompt and secret key"))
@@ -80,25 +86,58 @@ class AgentFlowTest(unittest.TestCase):
         self.assertIn("RuntimeError", logs.output[0])
         self.assertNotIn("private prompt", logs.output[0])
 
+    def test_openai_selected_chunk_preserves_original_whitespace_and_record(self):
+        import json
+        from app.main import SourceSelectionOutput
+        original = "가" * 240 + "원문  공백\r\n다음 줄\t끝"
+        selected = {"id": "record-2", "version": 7, "title": "두 번째 기록", "contentMarkdown": original}
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        proposal = valid["proposals"][0]
+        proposal.pop("evidence")
+        proposal["evidenceSourceIds"] = ["source-2-2"]
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[proposal])))
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
+            result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record, selected]), "test-key"))
+        evidence = result["proposals"][0]["evidence"]
+        self.assertEqual(evidence, [{"recordId": "record-2", "recordVersion": 7, "excerpt": original[240:]}])
+        prompt = runner.await_args.args[1].split("\nSelect relevant sourceId", 1)[0]
+        self.assertEqual(json.loads(prompt)["records"][-1]["excerpt"], evidence[0]["excerpt"])
+
+    def test_openai_never_substitutes_a_record_for_an_unknown_source(self):
+        from app.main import SourceSelectionOutput
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        proposal = valid["proposals"][0]
+        proposal.pop("evidence")
+        proposal["evidenceSourceIds"] = ["invented-source"]
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[proposal])))
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(runner.await_count, 2)
+
     def test_openai_requires_key(self):
         with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": ""}):
             with self.assertRaises(HTTPException) as caught:
                 asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
         self.assertEqual(caught.exception.status_code, 503)
 
-    def test_openai_retries_invalid_excerpt_then_returns_grounded_result(self):
-        from app.main import ProposalOutput
+    def test_openai_retries_unknown_source_then_returns_grounded_result(self):
+        from app.main import SourceSelectionOutput
         valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
-        output = ProposalOutput(proposals=valid["proposals"])
+        proposal = valid["proposals"][0]
+        proposal.pop("evidence")
+        proposal["evidenceSourceIds"] = ["source-1-1"]
+        output = SourceSelectionOutput(proposals=[proposal])
         invalid = output.model_copy(deep=True)
-        invalid.proposals[0].evidence[0].excerpt = "invented quote"
+        invalid.proposals[0].evidenceSourceIds = ["invented-source"]
         runner = AsyncMock(side_effect=[types.SimpleNamespace(final_output=invalid), types.SimpleNamespace(final_output=output)])
         with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
             result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
         self.assertEqual(runner.await_count, 2)
         self.assertEqual(result["proposals"][0]["evidence"][0]["excerpt"], self.record["contentMarkdown"])
-        self.assertIn("excerpt_not_in_source", runner.await_args_list[1].args[1])
-        self.assertIn("invented quote", runner.await_args_list[1].args[1])
+        self.assertIn("unknown_source_id", runner.await_args_list[1].args[1])
+        self.assertIn("invented-source", runner.await_args_list[1].args[1])
 
     def test_evidence_rejections_distinguish_id_version_and_excerpt(self):
         from app.main import ProposalOutput, _filter_proposals
@@ -117,8 +156,8 @@ class AgentFlowTest(unittest.TestCase):
                                     "blank_excerpt": 1, "excerpt_not_in_source": 1})
 
     def test_openai_persistent_empty_result_returns_422_instead_of_success(self):
-        from app.main import ProposalOutput
-        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=ProposalOutput()))
+        from app.main import SourceSelectionOutput
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=SourceSelectionOutput()))
         with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
             with self.assertRaises(HTTPException) as caught:
                 asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
