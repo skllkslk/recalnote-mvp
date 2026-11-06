@@ -97,6 +97,24 @@ class AgentFlowTest(unittest.TestCase):
             result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
         self.assertEqual(runner.await_count, 2)
         self.assertEqual(result["proposals"][0]["evidence"][0]["excerpt"], self.record["contentMarkdown"])
+        self.assertIn("excerpt_not_in_source", runner.await_args_list[1].args[1])
+        self.assertIn("invented quote", runner.await_args_list[1].args[1])
+
+    def test_evidence_rejections_distinguish_id_version_and_excerpt(self):
+        from app.main import ProposalOutput, _filter_proposals
+        result = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        output = ProposalOutput(proposals=result["proposals"])
+        template = output.proposals[0].evidence[0]
+        output.proposals[0].evidence = [
+            template.model_copy(update={"recordId": "unknown"}),
+            template.model_copy(update={"recordVersion": 99}),
+            template.model_copy(update={"excerpt": " "}),
+            template.model_copy(update={"excerpt": "invented private quote"}),
+        ]
+        rejected = {}
+        self.assertEqual(_filter_proposals(output, [self.record], rejected), [])
+        self.assertEqual(rejected, {"unknown_record_id": 1, "record_version_mismatch": 1,
+                                    "blank_excerpt": 1, "excerpt_not_in_source": 1})
 
     def test_openai_persistent_empty_result_returns_422_instead_of_success(self):
         from app.main import ProposalOutput
