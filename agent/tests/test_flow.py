@@ -1,5 +1,7 @@
 import asyncio
 import os
+import sys
+import types
 import unittest
 from unittest.mock import patch
 
@@ -50,6 +52,39 @@ class AgentFlowTest(unittest.TestCase):
     def test_no_records_produces_no_proposals(self):
         result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
         self.assertEqual(result["proposals"], [])
+
+    def test_gemini_mode_returns_schema_validated_and_current_evidence(self):
+        response_text = '''{"proposals":[{"title":"Gemini 결과","description":"설명","steps":["기록을 확인한다","결과를 정리한다"],"completionCriteria":"검증 가능","rationale":"근거 기반","resultMarkdown":"# 결과","evidence":[{"recordId":"record-1","recordVersion":1,"excerpt":"권한 로직"},{"recordId":"stale-record","recordVersion":1,"excerpt":"제외"}]}]}'''
+
+        class FakeResponse:
+            text = response_text
+
+        class FakeModels:
+            def generate_content(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeResponse()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.models = FakeModels()
+
+        fake_genai = types.ModuleType("google.genai")
+        fake_genai.Client = FakeClient
+        fake_types = types.ModuleType("google.genai.types")
+        fake_types.GenerateContentConfig = lambda **kwargs: kwargs
+        fake_google = types.ModuleType("google")
+        fake_google.genai = fake_genai
+
+        with patch.dict(os.environ, {"AGENT_MODE": "gemini", "GEMINI_API_KEY": "test-gemini-key"}), \
+             patch.dict(sys.modules, {"google": fake_google, "google.genai": fake_genai, "google.genai.types": fake_types}):
+            result = asyncio.run(generate(GenerateRequest(
+                runId="run", userContext={}, epic={}, records=[self.record]
+            ), "test-key"))
+
+        self.assertEqual(result["status"], "SUCCEEDED")
+        self.assertEqual(len(result["proposals"]), 1)
+        self.assertEqual(result["proposals"][0]["evidence"][0]["recordId"], "record-1")
+        self.assertEqual(len(result["proposals"][0]["evidence"]), 1)
 
 
 if __name__ == "__main__":

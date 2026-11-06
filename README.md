@@ -28,7 +28,7 @@ Proposal and quest steps are stored as JSONB; completion criteria are stored sep
 
 Flyway V6 adds onboarding completion and the `result_markdown` columns on proposals and quests. Existing quests remain readable. First-time users choose an Epic on the profile screen. Pending NPC sessions can be resumed after reload using `/api/v1/agent-sessions/latest`.
 
-The default `AGENT_MODE=mock` exercises the full flow without a model key and returns a deterministic draft template or learning roadmap. NPC questions and confirmation cards currently follow a fixed short flow. `AGENT_MODE=openai` uses the Agents SDK, session records, and confirmed answers to generate the final result. Review and edit generated facts before accepting them.
+The default `AGENT_MODE=mock` exercises the full flow without a model key and returns a deterministic draft template or learning roadmap. NPC questions and confirmation cards currently follow a fixed short flow. `AGENT_MODE=openai` uses the Agents SDK, while `AGENT_MODE=gemini` uses the Google GenAI SDK and `GEMINI_API_KEY` to generate the final result. Review and edit generated facts before accepting them.
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ The named volume remains. To remove all local database data, run `docker compose
 
 Copy `.env.example` to `.env`; never commit `.env`. Compose requires explicit `POSTGRES_PASSWORD`, `DB_PASSWORD`, and `INTERNAL_API_KEY`. Set distinct strong secrets in each environment. Set `SPRING_PROFILES_ACTIVE=prod` and `DEV_USER_ENABLED=false` outside local development. In that mode the core API requires `X-Authenticated-User`; place it behind an authentication gateway that sets this header and strips client-supplied copies. The app provisions the authenticated subject on first request and scopes records and all user-owned resources to it. Do not expose this header as an unauthenticated identity mechanism.
 
-For actual model calls, set `AGENT_MODE=openai` and provide `OPENAI_API_KEY` to the agent container only. Keep it out of browser variables and source control. Compose exposes core API only on loopback by default; terminate TLS and add gateway authentication before public deployment. Configure `AGENT_BASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, credentials and service keys through environment variables without changing application code.
+For actual model calls, set `AGENT_MODE=gemini` and provide `GEMINI_API_KEY` to the agent container only. Optionally set `GEMINI_MODEL` to a model enabled for your Gemini API account. Keep provider keys out of browser variables and source control. Compose exposes core API only on loopback by default; terminate TLS and add gateway authentication before public deployment. Configure `AGENT_BASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, credentials and service keys through environment variables without changing application code.
 
 Health endpoints: Spring `/actuator/health/liveness` and `/actuator/health/readiness`; internal Agent `/health/live` and `/health/ready`. PostgreSQL uses `pg_isready`. The Agent container has no host port mapping. The Next.js route handler proxies browser requests to Spring. Set `API_BASE_URL=http://localhost:8080` in the Next.js process only when Spring is not at its default address; the browser calls the same-origin Next.js proxy.
 
