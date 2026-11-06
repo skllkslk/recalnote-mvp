@@ -30,6 +30,8 @@ Flyway V6 adds onboarding completion and the `result_markdown` columns on propos
 
 The default `AGENT_MODE=mock` exercises the full flow without a model key and returns a deterministic draft template or learning roadmap. NPC questions and confirmation cards currently follow a fixed short flow. `AGENT_MODE=openai` uses the Agents SDK, while `AGENT_MODE=gemini` uses the Google GenAI SDK and `GEMINI_API_KEY` to generate the final result. Review and edit generated facts before accepting them.
 
+For OpenAI on Railway, set `AGENT_MODE=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL=gpt-4.1-mini` on the **agent service**, then redeploy it with this source. The model defaults to `gpt-4.1-mini` and can be overridden without editing code. Keep `INTERNAL_API_KEY` identical on the API and agent services. No frontend or database change is required. OpenAI failures log the model, exception type, HTTP status and provider request ID without recording prompts, keys or response bodies. Generation is limited to 75 seconds, within the core API's 90-second agent timeout.
+
 ## Prerequisites
 
 - Docker Desktop with Docker Compose v2

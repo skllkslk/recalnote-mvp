@@ -3,7 +3,9 @@ import os
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 
 from app.main import GenerateRequest, InterpretRequest, generate, interpret
 
@@ -52,6 +54,37 @@ class AgentFlowTest(unittest.TestCase):
     def test_no_records_produces_no_proposals(self):
         result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
         self.assertEqual(result["proposals"], [])
+
+    def test_openai_filters_stale_evidence_and_uses_selected_model(self):
+        from agents import Agent
+        from app.main import ProposalOutput
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        proposal = valid["proposals"][0]
+        proposal["evidence"].append({"recordId": "stale", "recordVersion": 1, "excerpt": "stale"})
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=ProposalOutput(proposals=[proposal])))
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-4.1-mini"}), \
+             patch("agents.Runner.run", runner), patch("agents.Agent", wraps=Agent) as agent_class:
+            result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
+        self.assertEqual(agent_class.call_args.kwargs["model"], "gpt-4.1-mini")
+        self.assertEqual(len(result["proposals"][0]["evidence"]), 1)
+        self.assertEqual(result["proposals"][0]["resultMarkdown"], proposal["resultMarkdown"])
+
+    def test_openai_failure_logs_metadata_without_private_exception_text(self):
+        runner = AsyncMock(side_effect=RuntimeError("private prompt and secret key"))
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), \
+             patch("agents.Runner.run", runner), self.assertLogs("uvicorn.error", level="ERROR") as logs:
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
+        self.assertEqual(caught.exception.status_code, 502)
+        self.assertEqual(caught.exception.detail, "OpenAI generation failed")
+        self.assertIn("RuntimeError", logs.output[0])
+        self.assertNotIn("private prompt", logs.output[0])
+
+    def test_openai_requires_key(self):
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": ""}):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
+        self.assertEqual(caught.exception.status_code, 503)
 
     def test_gemini_mode_returns_schema_validated_and_current_evidence(self):
         response_text = '''{"proposals":[{"title":"Gemini 결과","description":"설명","steps":["기록을 확인한다","결과를 정리한다"],"completionCriteria":"검증 가능","rationale":"근거 기반","resultMarkdown":"# 결과","evidence":[{"recordId":"record-1","recordVersion":1,"excerpt":"권한 로직"},{"recordId":"stale-record","recordVersion":1,"excerpt":"제외"}]}]}'''

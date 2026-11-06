@@ -201,11 +201,24 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
         if not os.getenv("OPENAI_API_KEY"):
             raise HTTPException(status_code=503, detail="OpenAI API is not configured")
         from agents import Agent, Runner
+        model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         snippets = "\n".join(f"[{r['id']} v{r['version']}] {r['title']}: {r['contentMarkdown'][:1200]}" for r in req.records)
         agent = Agent(name="RecallNote quest planner", instructions=_generation_instructions(req.useCase.upper()),
-            output_type=ProposalOutput)
-        result = await Runner.run(agent, f"User context: {req.userContext}\nEpic: {req.epic}\nConfirmed answers: {req.answers}\nExisting quests: {req.existingQuests}\nRecords:\n{snippets}\nReturn structured output.")
-        output = result.final_output
+            model=model, output_type=ProposalOutput)
+        try:
+            result = await asyncio.wait_for(
+                Runner.run(agent, f"User context: {req.userContext}\nEpic: {req.epic}\nConfirmed answers: {req.answers}\nExisting quests: {req.existingQuests}\nRecords:\n{snippets}\nReturn structured output."),
+                timeout=75,
+            )
+            output = ProposalOutput.model_validate(result.final_output)
+        except Exception as exc:
+            # Never log exception messages: they may include records or credentials.
+            logger.error(
+                "OpenAI generation failed run_id=%s model=%s exception_type=%s provider_code=%s request_id=%s",
+                req.runId, model, type(exc).__name__,
+                getattr(exc, "status_code", None), getattr(exc, "request_id", None),
+            )
+            raise HTTPException(status_code=502, detail="OpenAI generation failed") from exc
         proposals = _filter_proposals(output, req.records)
         return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}
     proposals = []
