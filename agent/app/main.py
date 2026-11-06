@@ -1,10 +1,12 @@
 import os
 import asyncio
+import logging
 from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="RecallNote Agent API", docs_url=None, redoc_url=None)
+logger = logging.getLogger("uvicorn.error")
 
 class GenerateRequest(BaseModel):
     runId: str
@@ -135,6 +137,12 @@ async def _generate_with_gemini(req: GenerateRequest) -> list[dict[str, Any]]:
         raise
     except Exception as exc:
         # Do not expose provider details or the prompt/record contents to clients.
+        # Exception messages and validation inputs can contain private record text.
+        logger.error(
+            "Gemini generation failed run_id=%s model=%s exception_type=%s provider_code=%s provider_status=%s",
+            req.runId, model, type(exc).__name__,
+            getattr(exc, "code", None), getattr(exc, "status", None),
+        )
         raise HTTPException(status_code=502, detail="Gemini generation failed") from exc
     return _filter_proposals(output, req.records)
 
