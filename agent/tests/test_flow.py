@@ -86,6 +86,27 @@ class AgentFlowTest(unittest.TestCase):
                 asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}), "test-key"))
         self.assertEqual(caught.exception.status_code, 503)
 
+    def test_openai_retries_invalid_excerpt_then_returns_grounded_result(self):
+        from app.main import ProposalOutput
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        output = ProposalOutput(proposals=valid["proposals"])
+        invalid = output.model_copy(deep=True)
+        invalid.proposals[0].evidence[0].excerpt = "invented quote"
+        runner = AsyncMock(side_effect=[types.SimpleNamespace(final_output=invalid), types.SimpleNamespace(final_output=output)])
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
+            result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
+        self.assertEqual(runner.await_count, 2)
+        self.assertEqual(result["proposals"][0]["evidence"][0]["excerpt"], self.record["contentMarkdown"])
+
+    def test_openai_persistent_empty_result_returns_422_instead_of_success(self):
+        from app.main import ProposalOutput
+        runner = AsyncMock(return_value=types.SimpleNamespace(final_output=ProposalOutput()))
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record]), "test-key"))
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(runner.await_count, 2)
+
     def test_gemini_mode_returns_schema_validated_and_current_evidence(self):
         response_text = '''{"proposals":[{"title":"Gemini 결과","description":"설명","steps":["기록을 확인한다","결과를 정리한다"],"completionCriteria":"검증 가능","rationale":"근거 기반","resultMarkdown":"# 결과","evidence":[{"recordId":"record-1","recordVersion":1,"excerpt":"권한 로직"},{"recordId":"stale-record","recordVersion":1,"excerpt":"제외"}]}]}'''
 

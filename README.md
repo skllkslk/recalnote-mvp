@@ -32,6 +32,8 @@ The default `AGENT_MODE=mock` exercises the full flow without a model key and re
 
 For OpenAI on Railway, set `AGENT_MODE=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL=gpt-4.1-mini` on the **agent service**, then redeploy it with this source. The model defaults to `gpt-4.1-mini` and can be overridden without editing code. Keep `INTERNAL_API_KEY` identical on the API and agent services. No frontend or database change is required. OpenAI failures log the model, exception type, HTTP status and provider request ID without recording prompts, keys or response bodies. Generation is limited to 75 seconds, within the core API's 90-second agent timeout.
 
+OpenAI receives structured source evidence and generated citations must match the record ID, version and a verbatim excerpt. An empty or unusable result receives at most one correction attempt within the same 75-second deadline; this can incur a second model call. Validation logs show generated/usable proposal counts without record contents. If no usable result remains, the agent and core API return 422 instead of silently repeating the evidence confirmation card. Deploy the agent, backend and frontend together for this validation and user-facing error behavior.
+
 ## Prerequisites
 
 - Docker Desktop with Docker Compose v2

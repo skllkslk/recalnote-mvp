@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import json
 from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -69,7 +70,7 @@ def live(): return {"status": "UP"}
 def ready(): return {"status": "UP", "mode": os.getenv("AGENT_MODE", "mock")}
 
 def _filter_proposals(output: ProposalOutput, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep only evidence that still matches the record version supplied by Core API."""
+    """Apply the same record/version/verbatim-excerpt checks as Core API."""
     allowed = {str(r["id"]): r for r in records}
     proposals = []
     for proposal in output.proposals:
@@ -77,6 +78,7 @@ def _filter_proposals(output: ProposalOutput, records: list[dict[str, Any]]) -> 
             ev.model_dump()
             for ev in proposal.evidence
             if ev.recordId in allowed and ev.recordVersion == allowed[ev.recordId]["version"]
+            and ev.excerpt.strip() and ev.excerpt in allowed[ev.recordId]["contentMarkdown"]
         ]
         if evidence:
             proposals.append({**proposal.model_dump(exclude={"evidence"}), "evidence": evidence})
@@ -202,15 +204,36 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
             raise HTTPException(status_code=503, detail="OpenAI API is not configured")
         from agents import Agent, Runner
         model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        snippets = "\n".join(f"[{r['id']} v{r['version']}] {r['title']}: {r['contentMarkdown'][:1200]}" for r in req.records)
+        sources = [{"title": r["title"], "contentMarkdown": r["contentMarkdown"][:1200],
+                    "evidence": {"recordId": str(r["id"]), "recordVersion": r["version"],
+                                 "excerpt": r["contentMarkdown"][:240]}} for r in req.records]
+        prompt = json.dumps({"userContext": req.userContext, "epic": req.epic,
+                             "answers": req.answers, "existingQuests": req.existingQuests,
+                             "records": sources}, ensure_ascii=False)
         agent = Agent(name="RecallNote quest planner", instructions=_generation_instructions(req.useCase.upper()),
             model=model, output_type=ProposalOutput)
+
+        async def generate_validated():
+            correction = ""
+            for attempt in range(2):
+                result = await Runner.run(agent, prompt + "\nCopy relevant records' evidence objects exactly into proposal.evidence. "
+                                          "Do not translate, summarize, or add ellipses to excerpts. Return structured output." + correction)
+                output = ProposalOutput.model_validate(result.final_output)
+                proposals = _filter_proposals(output, req.records)
+                logger.info("OpenAI proposal validation run_id=%s attempt=%s generated=%s usable=%s",
+                            req.runId, attempt + 1, len(output.proposals), len(proposals))
+                if proposals or not req.records:
+                    return proposals
+                correction = ("\nThe previous attempt had no usable proposal. If these confirmed records are relevant, "
+                              "produce one grounded draft; mark missing facts as [확인 필요]. "
+                              "Use an exact supplied evidence object, including its recordId, integer recordVersion, and excerpt. "
+                              "If no relevant evidence exists, return an empty proposals list.")
+            raise HTTPException(status_code=422, detail="No usable proposal could be grounded in the supplied records")
+
         try:
-            result = await asyncio.wait_for(
-                Runner.run(agent, f"User context: {req.userContext}\nEpic: {req.epic}\nConfirmed answers: {req.answers}\nExisting quests: {req.existingQuests}\nRecords:\n{snippets}\nReturn structured output."),
-                timeout=75,
-            )
-            output = ProposalOutput.model_validate(result.final_output)
+            proposals = await asyncio.wait_for(generate_validated(), timeout=75)
+        except HTTPException:
+            raise
         except Exception as exc:
             # Never log exception messages: they may include records or credentials.
             logger.error(
@@ -219,7 +242,6 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
                 getattr(exc, "status_code", None), getattr(exc, "request_id", None),
             )
             raise HTTPException(status_code=502, detail="OpenAI generation failed") from exc
-        proposals = _filter_proposals(output, req.records)
         return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}
     proposals = []
     existing_titles = {str(q.get("title", "")).strip().casefold() for q in req.existingQuests}

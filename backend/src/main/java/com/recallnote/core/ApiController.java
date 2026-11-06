@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1")
 public class ApiController {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ApiController.class);
     static final ThreadLocal<String> CURRENT_USER = new ThreadLocal<>();
     private final JdbcTemplate db;
     private final HttpClient agent = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
@@ -125,6 +126,10 @@ public class ApiController {
                 db.update("UPDATE agent_session SET state='PROPOSAL_PENDING',context_json=?::jsonb,proposal_id=?,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",json(context),proposalId,json(List.of(Map.of("type","PROPOSAL","id","proposal","title",proposal.get("title"),"value",proposal))),id,userId());
                 return sessionResponse(id);
             }
+            // A successful HTTP response can still contain no usable proposals.
+            // Do not send the user back to the same evidence confirmation card.
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "No usable proposal was generated; retry generation");
         }
         Map<String,Object> interpreted=interpretSession(id,selectedUseCase,activeEpic,context);
         db.update("UPDATE agent_session SET state=?,context_json=?::jsonb,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",interpreted.getOrDefault("state","NEEDS_INPUT"),json(context),json(interpreted.getOrDefault("cards",List.of())),id,userId());
@@ -181,6 +186,8 @@ public class ApiController {
                     .timeout(java.time.Duration.ofSeconds(90)).POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
                     .build();
             HttpResponse<String> agentResponse=agent.send(agentRequest,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if(agentResponse.statusCode()==422)
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,"No usable proposal was generated");
             if(agentResponse.statusCode()<200 || agentResponse.statusCode()>=300)
                 throw new IllegalStateException("Agent API returned HTTP "+agentResponse.statusCode()+": "+agentResponse.body());
             Map response=new com.fasterxml.jackson.databind.ObjectMapper().readValue(agentResponse.body(),Map.class);
@@ -199,11 +206,18 @@ public class ApiController {
                     savedEvidence+=db.update("INSERT INTO proposal_evidence(proposal_id,record_id,record_version,excerpt) SELECT ?,id,version,? FROM record WHERE id=? AND user_id=? AND version=? AND deleted_at IS NULL ON CONFLICT DO NOTHING",
                             pid,v.get("excerpt"),UUID.fromString(v.get("recordId").toString()),userId(),v.get("recordVersion"));
                 }
-                if(savedEvidence==0) db.update("DELETE FROM quest_proposal WHERE id=?",pid);
+                if(savedEvidence==0) {
+                    log.warn("Proposal rejected: no matching source evidence run_id={} proposal_id={}",runId,pid);
+                    db.update("DELETE FROM quest_proposal WHERE id=?",pid);
+                }
             }
             db.update("UPDATE agent_run SET status='SUCCEEDED' WHERE id=?",runId);
             return Map.of("runId",runId,"status","SUCCEEDED","proposals",proposalRows("run_id",runId));
-        } catch(Exception ex) { db.update("UPDATE agent_run SET status='FAILED',error_code=? WHERE id=?",ex.getClass().getSimpleName(),runId); throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"Agent request failed",ex); }
+        } catch(Exception ex) {
+            db.update("UPDATE agent_run SET status='FAILED',error_code=? WHERE id=?",ex.getClass().getSimpleName(),runId);
+            if(ex instanceof ResponseStatusException responseError) throw responseError;
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"Agent request failed",ex);
+        }
     }
     @GetMapping("/quest-proposals") public List<Map<String,Object>> proposals() { return proposalRows("user_id",userId()); }
     @GetMapping("/quest-proposals/{id}") public Map<String,Object> proposal(@PathVariable UUID id) {

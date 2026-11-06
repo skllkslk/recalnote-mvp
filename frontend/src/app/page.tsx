@@ -32,6 +32,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...options?.headers },
   })
   if (!response.ok) {
+    if (response.status === 422 && path.startsWith("/agent-sessions/")) {
+      throw new Error("원본 근거와 일치하는 결과물을 만들지 못했어요. 다시 시도하거나 ‘다른 기록을 찾을게요’로 내용을 보완해 주세요.")
+    }
     const detail = await response.text()
     throw new Error(detail || `요청에 실패했습니다 (${response.status})`)
   }
