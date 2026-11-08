@@ -46,6 +46,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       AGENT_BASE_URL: ${AGENT_BASE_URL:-http://agent-api:8000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-unconfigured}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-unconfigured}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       DEV_USER_ID: ${DEV_USER_ID:-dev-user-001}
       DEV_USER_ENABLED: ${DEV_USER_ENABLED:-true}
     ports:

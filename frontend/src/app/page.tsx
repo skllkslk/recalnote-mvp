@@ -26,11 +26,25 @@ const nav: { id: Page; label: string; icon: string }[] = [
   { id: "archive", label: "내 경험", icon: "▤" },
 ]
 
+async function csrfHeaders(): Promise<Record<string, string>> {
+  const response = await fetch("/auth/csrf", { cache: "no-store" })
+  if (!response.ok) throw new Error("인증 정보를 확인하지 못했습니다. 다시 시도해 주세요.")
+  const csrf = await response.json() as { token: string; headerName: string }
+  return csrf.token ? { [csrf.headerName]: csrf.token } : {}
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const csrf = options?.method && !["GET", "HEAD"].includes(options.method) ? await csrfHeaders() : {}
   const response = await fetch(`/api/v1${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...options?.headers, ...csrf },
   })
+  const expired = response.status === 401 || (response.status === 403 &&
+    (await fetch("/api/v1/users/me", { cache: "no-store" })).status === 401)
+  if (expired) {
+    window.location.replace("/?login=expired")
+    throw new Error("로그인이 필요합니다.")
+  }
   if (!response.ok) {
     if (response.status === 422 && path.startsWith("/agent-sessions/")) {
       throw new Error("원본 근거와 일치하는 결과물을 만들지 못했어요. 다시 시도하거나 ‘다른 기록을 찾을게요’로 내용을 보완해 주세요.")
@@ -120,6 +134,8 @@ export default function App() {
   const [epic, setEpic] = useState<Epic | null>(null)
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [quests, setQuests] = useState<Quest[]>([])
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
+  const [loginError, setLoginError] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -172,11 +188,28 @@ export default function App() {
     } finally { setLoading(false) }
   }
   useEffect(() => {
-    void refresh()
-    void request<Partial<AgentSession>>("/agent-sessions/latest").then(session => {
+    const reason = new URLSearchParams(window.location.search).get("login")
+    if (reason === "failed") setLoginError("Google 로그인에 실패했습니다. 다시 시도해 주세요.")
+    if (reason === "expired") setLoginError("세션이 만료되었습니다. 다시 로그인해 주세요.")
+    void fetch("/api/v1/users/me", { cache: "no-store" }).then(async response => {
+      const expired = response.status === 401 || (response.status === 403 &&
+    (await fetch("/api/v1/users/me", { cache: "no-store" })).status === 401)
+  if (expired) { setAuthenticated(false); return }
+      if (!response.ok) throw new Error("로그인 상태를 확인하지 못했습니다.")
+      setAuthenticated(true)
+      await refresh()
+      const session = await request<Partial<AgentSession>>("/agent-sessions/latest").catch(() => ({} as Partial<AgentSession>))
       if (session.sessionId) setAgentSession(session as AgentSession)
-    }).catch(() => {})
+    }).catch(() => { setLoginError("서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요."); setAuthenticated(false) })
   }, [])
+
+  async function logout() {
+    try {
+      const response = await fetch("/auth/logout", { method: "POST", headers: await csrfHeaders() })
+      if (!response.ok) throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.")
+      window.location.replace("/")
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "로그아웃하지 못했습니다.") }
+  }
   useEffect(() => {
     const value = agentSession?.cards.find(card => card.type === "PROPOSAL")?.value as Proposal | undefined
     setReviewMarkdown(value?.resultMarkdown ?? "")
@@ -390,10 +423,13 @@ export default function App() {
 
   const recordDetail = selectedRecord && <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedRecord(null) }}><aside className="record-drawer" aria-label="기록 상세"><button className="drawer-close" onClick={() => setSelectedRecord(null)} aria-label="닫기">×</button><p className="eyebrow">원본 기록 · v{selectedRecord.version}</p><div className="drawer-meta"><span className="source-pill">직접 입력 / 가져오기</span><span>{dateLabel(selectedRecord.createdAt)}</span></div><h2>{selectedRecord.title}</h2><pre className="record-body">{selectedRecord.contentMarkdown}</pre><div className="drawer-actions"><button className="button secondary" onClick={() => openEditRecord(selectedRecord)}>기록 수정</button><button className="button danger-quiet" onClick={() => void deleteRecord(selectedRecord)}>기록 삭제</button>{!selectedRecord.tags?.includes("learning-note") && <button className="button primary" onClick={() => { setStudioRecordIds(ids => ids.includes(selectedRecord.id) ? ids : [...ids, selectedRecord.id]); setSelectedRecord(null); setPage("studio") }}>경력기술서 근거로 선택</button>}</div></aside></div>
 
+  if (authenticated === null) return <main className="page inner-page"><p role="status">로그인 상태를 확인하는 중…</p></main>
+  if (!authenticated) return <main className="page inner-page"><div className="import-panel"><p className="eyebrow">RECALLNOTE</p><h1>내 경험을 다음 단계로</h1><p>Google 계정으로 로그인하고 나만의 기록과 결과물을 관리하세요.</p>{loginError && <p role="alert">{loginError}</p>}<a className="button primary" href="/auth/login/google">Google로 시작하기</a></div></main>
+
   return <div className="app-shell">
     <div className="app-main">
       <div className="app-hud">
-        <header className="topbar"><button type="button" className={`player-hud ${page === "profile" ? "selected" : ""}`} onClick={() => setPage("profile")} aria-label="내 플레이어 프로필 열기"><span className="top-player-sprite"><PlayerSprite /></span><span className="top-player-details"><small>PLAYER · LV.{completedCareerStages + 1}</small><strong>{profile.displayName || "프로필 입력"}</strong><span>기록 {experienceRecords.length} · 단계 {quests.length}</span><i className="player-progress"><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></span><span className="profile-open-mark">↗</span></button><div className="topbar-right"><button className="brand hud-brand" onClick={() => setPage("home")}><span className="brand-mark">R</span><span>RecallNote</span></button><button className="button primary" onClick={openNewRecord}>＋ 새 기록</button></div></header>
+        <header className="topbar"><button type="button" className={`player-hud ${page === "profile" ? "selected" : ""}`} onClick={() => setPage("profile")} aria-label="내 플레이어 프로필 열기"><span className="top-player-sprite"><PlayerSprite /></span><span className="top-player-details"><small>PLAYER · LV.{completedCareerStages + 1}</small><strong>{profile.displayName || "프로필 입력"}</strong><span>기록 {experienceRecords.length} · 단계 {quests.length}</span><i className="player-progress"><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></span><span className="profile-open-mark">↗</span></button><div className="topbar-right"><button className="button secondary" onClick={() => void logout()}>로그아웃</button><button className="brand hud-brand" onClick={() => setPage("home")}><span className="brand-mark">R</span><span>RecallNote</span></button><button className="button primary" onClick={openNewRecord}>＋ 새 기록</button></div></header>
       </div>      {(error || notice) && <div className={`notice ${error ? "error" : "success"}`} role={error ? "alert" : "status"}><span>{error || notice}</span><button onClick={() => { setError(""); setNotice("") }}>닫기</button></div>}
       {page === "agent" && <main className="page inner-page agent-page">
         <button className="back-link" onClick={() => setPage("home")}>← 홈</button>

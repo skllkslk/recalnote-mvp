@@ -78,9 +78,9 @@ The named volume remains. To remove all local database data, run `docker compose
 
 ## Configuration and deployment
 
-Copy `.env.example` to `.env`; never commit `.env`. Compose requires explicit `POSTGRES_PASSWORD`, `DB_PASSWORD`, and `INTERNAL_API_KEY`. Set distinct strong secrets in each environment. Set `SPRING_PROFILES_ACTIVE=prod` and `DEV_USER_ENABLED=false` outside local development. In that mode the core API requires `X-Authenticated-User`; place it behind an authentication gateway that sets this header and strips client-supplied copies. The app provisions the authenticated subject on first request and scopes records and all user-owned resources to it. Do not expose this header as an unauthenticated identity mechanism.
+Copy `.env.example` to `.env`; never commit `.env`. Production uses Google OIDC login and PostgreSQL-backed sessions. Set `SPRING_PROFILES_ACTIVE=prod`, `DEV_USER_ENABLED=false`, `SESSION_COOKIE_SECURE=true`, the fixed HTTPS `PUBLIC_BASE_URL`, and Google OAuth credentials. `X-Authenticated-User` is no longer accepted. See [Google login setup and verification](docs/social-login.md) before deploying the backend and frontend together.
 
-For actual model calls, set `AGENT_MODE=gemini` and provide `GEMINI_API_KEY` to the agent container only. Optionally set `GEMINI_MODEL` to a model enabled for your Gemini API account. Keep provider keys out of browser variables and source control. Compose exposes core API only on loopback by default; terminate TLS and add gateway authentication before public deployment. Configure `AGENT_BASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, credentials and service keys through environment variables without changing application code.
+For actual model calls, set `AGENT_MODE=gemini` and provide `GEMINI_API_KEY` to the agent container only. Optionally set `GEMINI_MODEL` to a model enabled for your Gemini API account. Keep provider keys out of browser variables and source control. Compose exposes core API only on loopback by default; terminate TLS and configure Google login before public deployment. Configure `AGENT_BASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, credentials and service keys through environment variables without changing application code.
 
 Health endpoints: Spring `/actuator/health/liveness` and `/actuator/health/readiness`; internal Agent `/health/live` and `/health/ready`. PostgreSQL uses `pg_isready`. The Agent container has no host port mapping. The Next.js route handler proxies browser requests to Spring. Set `API_BASE_URL=http://localhost:8080` in the Next.js process only when Spring is not at its default address; the browser calls the same-origin Next.js proxy.
 
@@ -94,12 +94,11 @@ Flyway migrations live in `backend/src/main/resources/db/migration`. Hibernate s
 
 ## Developer documentation
 
-For isolated integration checks with mock generation:
+The legacy Python flow harness below predates session authentication and no longer authenticates. Use `mvn test` and the opt-in PostgreSQL checks in [social-login.md](docs/social-login.md) for this release. The Compose environment remains available as an isolated database/agent setup:
 
 ```powershell
 docker compose -p recallnote-flow-check -f compose.flow-test.yaml up --build -d
 # Wait for http://localhost:18081/actuator/health/readiness to report UP.
-python -m unittest discover -s tests -v
 docker compose -p recallnote-flow-check -f compose.flow-test.yaml down -v
 ```
 

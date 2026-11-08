@@ -4,6 +4,10 @@ import java.io.IOException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.Ordered;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.filter.OncePerRequestFilter;
 import jakarta.servlet.FilterChain;
@@ -12,6 +16,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 @Component
+@Order(Ordered.LOWEST_PRECEDENCE - 10)
 public class CurrentUserFilter extends OncePerRequestFilter {
     private final boolean devEnabled;
     private final String devUserId;
@@ -22,11 +27,13 @@ public class CurrentUserFilter extends OncePerRequestFilter {
     }
     @Override protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI().substring(request.getContextPath().length());
-        return "/actuator/health".equals(path) || path.startsWith("/actuator/health/");
+        return !path.startsWith("/api/v1/");
     }
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String user=devEnabled ? devUserId : request.getHeader("X-Authenticated-User");
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        String user = devEnabled ? devUserId : authentication != null && authentication.getPrincipal() instanceof OidcUser oidc
+                ? oidc.getName() : null;
         if (user==null || user.isBlank()) { response.sendError(HttpStatus.UNAUTHORIZED.value(), "Authentication required"); return; }
         try { db.update("INSERT INTO app_user(id) VALUES (?) ON CONFLICT DO NOTHING",user); ApiController.CURRENT_USER.set(user); chain.doFilter(request,response); }
         finally { ApiController.CURRENT_USER.remove(); }

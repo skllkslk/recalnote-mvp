@@ -6,6 +6,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
+@unittest.skip("Legacy header authentication removed; use backend SecurityTest and PostgreSQLSecurityTest")
 class MvpFlowTest(unittest.TestCase):
     def setUp(self):
         self.user = "flow-test-" + uuid.uuid4().hex

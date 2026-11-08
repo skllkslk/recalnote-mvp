@@ -1,6 +1,26 @@
 server:
   port: ${SERVER_PORT:${PORT:8080}}
 spring:
+  session:
+    timeout: 7d
+    jdbc:
+      initialize-schema: never
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:unconfigured}
+            client-secret: ${GOOGLE_CLIENT_SECRET:unconfigured}
+            scope: openid,profile,email
+            redirect-uri: ${app.public-base-url}/auth/callback/google
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            jwk-set-uri: https://www.googleapis.com/oauth2/v3/certs
+            user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+            user-name-attribute: sub
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:recallnote}
     username: ${DB_USER:recallnote}
@@ -25,5 +45,7 @@ agent:
   base-url: ${AGENT_BASE_URL:http://localhost:8000}
   internal-api-key: ${INTERNAL_API_KEY:}
 app:
+  public-base-url: ${PUBLIC_BASE_URL:http://localhost:3000}
+  session-cookie-secure: ${SESSION_COOKIE_SECURE:true}
   dev-user-enabled: ${DEV_USER_ENABLED:false}
   dev-user-id: ${DEV_USER_ID:dev-user-001}

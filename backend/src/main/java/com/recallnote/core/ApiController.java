@@ -162,7 +162,9 @@ public class ApiController {
     }
     private Map<String,Object> generateForContext(Map<String,String> body,Map<String,Object> context) {
         UUID epicId=UUID.fromString(body.get("epicId"));
-        Map<String,Object> e=db.queryForMap("SELECT id,title,completion_criteria,use_case FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId());
+        Map<String,Object> e;
+        try { e=db.queryForMap("SELECT id,title,completion_criteria,use_case FROM epic WHERE id=? AND user_id=? AND status='ACTIVE'",epicId,userId()); }
+        catch (org.springframework.dao.EmptyResultDataAccessException ex) { throw new NotFoundException(); }
         String selectedUseCase=normalizedUseCase(e.get("use_case"));
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
         String recordFilter=selectedUseCase.equals("LEARNING") ? "" : " AND NOT (tags_json @> '[\"learning-note\"]'::jsonb)";
@@ -230,7 +232,9 @@ public class ApiController {
     }
     @PostMapping("/quest-proposals/{id}/decisions") @Transactional public Map<String,Object> decision(@PathVariable UUID id,@RequestBody Map<String,Object> b) {
         db.queryForList("SELECT id FROM agent_session WHERE proposal_id=? AND user_id=? FOR UPDATE",id,userId());
-        Map<String,Object> p=db.queryForMap("SELECT * FROM quest_proposal WHERE id=? AND user_id=? FOR UPDATE",id,userId());
+        Map<String,Object> p;
+        try { p=db.queryForMap("SELECT * FROM quest_proposal WHERE id=? AND user_id=? FOR UPDATE",id,userId()); }
+        catch (org.springframework.dao.EmptyResultDataAccessException ex) { throw new NotFoundException(); }
         String action=Objects.toString(b.get("action"),"");
         if(!"PENDING".equals(p.get("status"))) throw new ResponseStatusException(HttpStatus.CONFLICT,"Proposal already decided");
         if("REJECT".equals(action)) { db.update("UPDATE quest_proposal SET status='REJECTED',decision_reason=? WHERE id=?",b.get("reason"),id); db.update("UPDATE agent_session SET state='REJECTED',updated_at=now() WHERE proposal_id=? AND user_id=?",id,userId()); return Map.of("proposalId",id,"status","REJECTED"); }

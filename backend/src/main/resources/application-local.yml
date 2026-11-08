@@ -1,2 +1,3 @@
 app:
   dev-user-enabled: ${DEV_USER_ENABLED:true}
+  session-cookie-secure: ${SESSION_COOKIE_SECURE:false}

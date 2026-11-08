@@ -52,7 +52,7 @@ class CurrentUserFilterTest {
     }
 
     @Test
-    void apiRequestUsesAuthenticatedHeaderWhenDevUserDisabled() throws Exception {
+    void apiRequestRejectsForgedHeaderWhenDevUserDisabled() throws Exception {
         CurrentUserFilter filter = new CurrentUserFilter(false, "dev-user-001", db);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/records");
         request.addHeader("X-Authenticated-User", "user-123");
@@ -60,8 +60,7 @@ class CurrentUserFilterTest {
 
         filter.doFilter(request, response, chain);
 
-        assertEquals(200, response.getStatus());
-        verify(db).update("INSERT INTO app_user(id) VALUES (?) ON CONFLICT DO NOTHING", "user-123");
-        verify(chain).doFilter(request, response);
+        assertEquals(401, response.getStatus());
+        verifyNoInteractions(db, chain);
     }
 }
