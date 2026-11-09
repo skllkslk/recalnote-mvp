@@ -18,3 +18,5 @@ backend/target/
 
 .m2/
 frontend/*.tsbuildinfo
+.vercel
+.env*

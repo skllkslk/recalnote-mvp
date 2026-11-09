@@ -17,13 +17,14 @@ import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(controllers={ApiController.class, AuthController.class}, properties={
+@WebMvcTest(controllers={ApiController.class, AuthController.class, NotionImportController.class}, properties={
     "spring.security.oauth2.client.registration.google.client-id=test-client", "spring.security.oauth2.client.registration.google.client-secret=test-secret", "app.public-base-url=https://example.com", "app.dev-user-enabled=false"})
 @Import(SecurityConfig.class)
 class SecurityTest {
     @Autowired MockMvc mvc;
     @MockBean JdbcTemplate db;
     @MockBean SocialIdentityService identities;
+    @MockBean NotionImportService notionImports;
 
     static org.springframework.security.oauth2.core.oidc.user.OidcUser user(String id) {
         return new DefaultOidcUser(List.of(new SimpleGrantedAuthority("ROLE_USER")),
@@ -33,6 +34,33 @@ class SecurityTest {
     @Test void anonymousAndForgedHeadersAreRejected() throws Exception {
         mvc.perform(get("/api/v1/records").header("X-Authenticated-User","victim")).andExpect(status().isUnauthorized());
         verifyNoInteractions(db);
+    }
+    @Test void notionImportRequiresSessionAndCsrf() throws Exception {
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "notion.zip", "application/zip", new byte[]{1});
+        mvc.perform(multipart("/api/v1/imports/notion").file(file).with(csrf()))
+            .andExpect(status().isUnauthorized());
+        mvc.perform(multipart("/api/v1/imports/notion").file(file).with(oidcLogin().oidcUser(user("member-a"))))
+            .andExpect(status().isForbidden());
+        verifyNoInteractions(notionImports);
+    }
+    @Test void notionImportUsesSessionOwnerAndReturnsSummary() throws Exception {
+        byte[] bytes = NotionZipReaderTest.zip(Map.of("page.md", NotionZipReaderTest.text("# Page")));
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "notion.zip", "application/zip", bytes);
+        when(notionImports.importArchive(eq("member-a"), any(byte[].class), eq("Project")))
+            .thenReturn(new NotionImportService.Result(1,1,0,0,0,0));
+        mvc.perform(multipart("/api/v1/imports/notion").file(file).param("project", "Project")
+            .header("X-Authenticated-User", "member-b").with(oidcLogin().oidcUser(user("member-a"))).with(csrf()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.imported").value(1));
+        verify(notionImports).importArchive(eq("member-a"), eq(bytes), eq("Project"));
+    }
+    @Test void invalidNotionUploadsReturnReadableErrors() throws Exception {
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "export.html", "text/html", new byte[]{1});
+        mvc.perform(multipart("/api/v1/imports/notion").file(file).with(oidcLogin().oidcUser(user("member-a"))).with(csrf()))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());
+        var large = new org.springframework.mock.web.MockMultipartFile("file", "export.zip", "application/zip", new byte[NotionZipReader.MAX_UPLOAD_BYTES + 1]);
+        mvc.perform(multipart("/api/v1/imports/notion").file(large).with(oidcLogin().oidcUser(user("member-a"))).with(csrf()))
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.message").isNotEmpty());
+        verifyNoInteractions(notionImports);
     }
     @Test void identityComesFromAuthenticatedPrincipal() throws Exception {
         mvc.perform(get("/api/v1/users/me").with(oidcLogin().oidcUser(user("member-a")))

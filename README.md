@@ -41,6 +41,8 @@ OpenAI selects source IDs from server-created excerpt chunks (up to the first 1,
 
 ## Start locally (PowerShell)
 
+Notion Markdown & CSV export ZIPs can be uploaded at **내 경험 → 기록 가져오기 → Notion ZIP**. See [Notion import](docs/notion-import.md) for limits, duplicate handling, and deployment order.
+
 ```powershell
 Copy-Item .env.example .env
 # Edit .env and replace POSTGRES_PASSWORD, DB_PASSWORD and INTERNAL_API_KEY.

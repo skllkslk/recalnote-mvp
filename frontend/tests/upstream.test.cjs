@@ -56,3 +56,27 @@ test("proxy forwards CSRF and body, preserving logout 204", async () => {
     assert.equal(await response.text(), "")
   } finally { global.fetch = original }
 })
+
+test("proxy preserves multipart ZIP bytes and boundary with session and CSRF", async () => {
+  const original = global.fetch
+  const form = new FormData()
+  form.append("file", new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff])], { type: "application/zip" }), "notion.zip")
+  form.append("project", "Notion project")
+  const incoming = new NextRequest("https://app.example/api/v1/imports/notion", {
+    method: "POST", headers: { cookie: "SESSION=YWJjZA==", "x-csrf-token": "csrf-token" }, body: form,
+  })
+  const expected = Buffer.from(await incoming.clone().arrayBuffer())
+  global.fetch = async (url, options) => {
+    assert.equal(new URL(url).pathname, "/api/v1/imports/notion")
+    assert.match(options.headers.get("content-type"), /^multipart\/form-data; boundary=/)
+    assert.equal(options.headers.get("cookie"), "SESSION=YWJjZA==")
+    assert.equal(options.headers.get("x-csrf-token"), "csrf-token")
+    assert.deepEqual(Buffer.from(options.body), expected)
+    return Response.json({ imported: 1, duplicates: 0 })
+  }
+  try {
+    const response = await upstream(incoming, "/api/v1/imports/notion")
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).imported, 1)
+  } finally { global.fetch = original }
+})

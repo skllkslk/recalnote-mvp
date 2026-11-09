@@ -36,7 +36,7 @@ public class ApiController {
         return ResponseEntity.status(201).body(record(id));
     }
     @GetMapping("/records") public List<Map<String,Object>> records() {
-        return db.queryForList("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,version,created_at AS \"createdAt\" FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at DESC",userId());
+        return db.queryForList("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at DESC",userId());
     }
     @GetMapping("/records/{id}") public Map<String,Object> get(@PathVariable UUID id) { return record(id); }
     @PutMapping("/records/{id}") public Map<String,Object> update(@PathVariable UUID id,@RequestBody Map<String,Object> b) {
@@ -352,7 +352,7 @@ public class ApiController {
         if(!Set.of("CAREER","LEARNING").contains(result)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"useCase must be CAREER or LEARNING");
         return result;
     }
-    private Map<String,Object> record(UUID id) { try { return db.queryForMap("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,version,created_at AS \"createdAt\" FROM record WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId()); } catch(Exception e) { throw new NotFoundException(); } }
+    private Map<String,Object> record(UUID id) { try { return db.queryForMap("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId()); } catch(Exception e) { throw new NotFoundException(); } }
     private static String required(Map<String,Object>b,String k) { Object v=b.get(k); if(v==null||v.toString().isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,k+" is required"); return v.toString(); }
     private static String requiredText(Object value,String field) { if(value==null||value.toString().isBlank()) throw new IllegalArgumentException(field+" is required"); return value.toString(); }
     private static List<String> stringList(Object value) {

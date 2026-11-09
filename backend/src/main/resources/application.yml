@@ -1,6 +1,10 @@
 server:
   port: ${SERVER_PORT:${PORT:8080}}
 spring:
+  servlet:
+    multipart:
+      max-file-size: 4MB
+      max-request-size: 5MB
   session:
     timeout: 7d
     jdbc:

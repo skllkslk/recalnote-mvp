@@ -5,7 +5,8 @@ import { makeBusinessProjects } from "./memory-world-model"
 import { KnowledgeMap } from "./knowledge-map"
 
 type Page = "home" | "archive" | "import" | "search" | "quests" | "world" | "studio" | "learning" | "profile" | "agent"
-type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; version: number; createdAt: string }
+type RecordItem = { id: string; title: string; contentMarkdown: string; tags?: string[]; projectId?: string; projectName?: string; sourceType?: string; sourcePath?: string; sourcePageId?: string; version: number; createdAt: string }
+type NotionImportResult = { totalPages: number; imported: number; duplicates: number; csvFiles: number; attachmentFiles: number; emptyPages: number }
 type Epic = { id: string; title: string; completionCriteria: string; useCase?: "CAREER" | "LEARNING" }
 type Evidence = { recordId: string; recordVersion: number; excerpt: string; recordTitle: string }
 type Proposal = { epicId?: string; resultMarkdown?: string; id: string; title: string; description: string; steps: string[]; completionCriteria: string; rationale: string; evidence: Evidence[]; status: string }
@@ -37,7 +38,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const csrf = options?.method && !["GET", "HEAD"].includes(options.method) ? await csrfHeaders() : {}
   const response = await fetch(`/api/v1${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers, ...csrf },
+    headers: { ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...options?.headers, ...csrf },
   })
   const expired = response.status === 401 || (response.status === 403 &&
     (await fetch("/api/v1/users/me", { cache: "no-store" })).status === 401)
@@ -50,7 +51,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       throw new Error("원본 근거와 일치하는 결과물을 만들지 못했어요. 다시 시도하거나 ‘다른 기록을 찾을게요’로 내용을 보완해 주세요.")
     }
     const detail = await response.text()
-    throw new Error(detail || `요청에 실패했습니다 (${response.status})`)
+    let message = response.status === 413 ? "파일이 너무 큽니다. ZIP 파일은 4 MiB 이하로 선택해 주세요." : `요청에 실패했습니다 (${response.status})`
+    try { message = (JSON.parse(detail) as { message?: string }).message || message } catch { /* Use a readable fallback for infrastructure errors. */ }
+    throw new Error(message)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -151,7 +154,8 @@ export default function App() {
   const [importTitle, setImportTitle] = useState("")
   const [importContent, setImportContent] = useState("")
   const [importProject, setImportProject] = useState("")
-  const [importMode, setImportMode] = useState<"files" | "write">("files")
+  const [importMode, setImportMode] = useState<"notion" | "files" | "write">("notion")
+  const [notionZip, setNotionZip] = useState<File | null>(null)
   const [studioQuest, setStudioQuest] = useState("")
   const [studioRecordIds, setStudioRecordIds] = useState<string[]>([])
   const [careerFields, setCareerFields] = useState<CareerFields>(emptyCareerFields)
@@ -247,7 +251,7 @@ export default function App() {
     setEditingRecord(record); setTitle(record.title); setContent(record.contentMarkdown); setTagsText((record.tags ?? []).join(", ")); setRecordEditor(true)
   }
   function openImport() {
-    setImportFiles([]); setImportTitle(""); setImportContent(""); setImportProject(""); setImportMode("files"); setPage("import")
+    setImportFiles([]); setNotionZip(null); setImportTitle(""); setImportContent(""); setImportProject(""); setImportMode("notion"); setPage("import")
   }
   function runSearch(event: FormEvent) {
     event.preventDefault(); setSubmittedQuery(query.trim()); setPage("search")
@@ -279,6 +283,17 @@ export default function App() {
   async function importMarkdown(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("")
     try {
+      if (importMode === "notion") {
+        if (!notionZip || !notionZip.name.toLowerCase().endsWith(".zip")) throw new Error("Notion에서 내보낸 ZIP 파일을 선택해 주세요.")
+        if (notionZip.size > 4 * 1024 * 1024) throw new Error("ZIP 파일은 4 MiB 이하로 선택해 주세요.")
+        const form = new FormData()
+        form.append("file", notionZip)
+        form.append("project", importProject.trim())
+        const result = await request<NotionImportResult>("/imports/notion", { method: "POST", body: form })
+        await refresh(); setPage("archive"); setNotionZip(null); setImportProject("")
+        setNotice(`Notion 페이지 ${result.totalPages}개 처리: ${result.imported}개 저장, 중복 ${result.duplicates}개 건너뜀. CSV 목록 ${result.csvFiles}개 · 첨부/기타 파일 ${result.attachmentFiles}개 · 빈 페이지 ${result.emptyPages}개 제외.`)
+        return
+      }
       const entries: { title: string; contentMarkdown: string }[] = []
       if (importMode === "write") {
         if (importTitle.trim() && importContent.trim()) entries.push({ title: importTitle.trim(), contentMarkdown: importContent.trim() })
@@ -421,7 +436,7 @@ export default function App() {
   }
   function toggleStudioRecord(id: string) { setStudioRecordIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]) }
 
-  const recordDetail = selectedRecord && <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedRecord(null) }}><aside className="record-drawer" aria-label="기록 상세"><button className="drawer-close" onClick={() => setSelectedRecord(null)} aria-label="닫기">×</button><p className="eyebrow">원본 기록 · v{selectedRecord.version}</p><div className="drawer-meta"><span className="source-pill">직접 입력 / 가져오기</span><span>{dateLabel(selectedRecord.createdAt)}</span></div><h2>{selectedRecord.title}</h2><pre className="record-body">{selectedRecord.contentMarkdown}</pre><div className="drawer-actions"><button className="button secondary" onClick={() => openEditRecord(selectedRecord)}>기록 수정</button><button className="button danger-quiet" onClick={() => void deleteRecord(selectedRecord)}>기록 삭제</button>{!selectedRecord.tags?.includes("learning-note") && <button className="button primary" onClick={() => { setStudioRecordIds(ids => ids.includes(selectedRecord.id) ? ids : [...ids, selectedRecord.id]); setSelectedRecord(null); setPage("studio") }}>경력기술서 근거로 선택</button>}</div></aside></div>
+  const recordDetail = selectedRecord && <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedRecord(null) }}><aside className="record-drawer" aria-label="기록 상세"><button className="drawer-close" onClick={() => setSelectedRecord(null)} aria-label="닫기">×</button><p className="eyebrow">원본 기록 · v{selectedRecord.version}</p><div className="drawer-meta"><span className="source-pill">{selectedRecord.sourceType === "notion" ? "Notion 가져오기" : "직접 입력 / 가져오기"}</span><span>{dateLabel(selectedRecord.createdAt)}</span></div><h2>{selectedRecord.title}</h2>{selectedRecord.sourcePath && <p className="muted-copy">원본 경로: {selectedRecord.sourcePath}</p>}<pre className="record-body">{selectedRecord.contentMarkdown}</pre><div className="drawer-actions"><button className="button secondary" onClick={() => openEditRecord(selectedRecord)}>기록 수정</button><button className="button danger-quiet" onClick={() => void deleteRecord(selectedRecord)}>기록 삭제</button>{!selectedRecord.tags?.includes("learning-note") && <button className="button primary" onClick={() => { setStudioRecordIds(ids => ids.includes(selectedRecord.id) ? ids : [...ids, selectedRecord.id]); setSelectedRecord(null); setPage("studio") }}>경력기술서 근거로 선택</button>}</div></aside></div>
 
   if (authenticated === null) return <main className="page inner-page"><p role="status">로그인 상태를 확인하는 중…</p></main>
   if (!authenticated) return <main className="page inner-page"><div className="import-panel"><p className="eyebrow">RECALLNOTE</p><h1>내 경험을 다음 단계로</h1><p>Google 계정으로 로그인하고 나만의 기록과 결과물을 관리하세요.</p>{loginError && <p role="alert">{loginError}</p>}<a className="button primary" href="/auth/login/google">Google로 시작하기</a></div></main>
@@ -481,9 +496,36 @@ export default function App() {
 
       {page === "search" && <main className="page inner-page"><div className="search-results-head"><button className="back-link" onClick={() => setPage("home")}>← 홈</button><form className="search-bar compact" onSubmit={runSearch}><Icon>⌕</Icon><input value={query} onChange={event => setQuery(event.target.value)} placeholder="기록 검색" aria-label="검색어" /><button className="search-submit" type="submit">검색</button></form></div><div className="page-title"><div><p className="eyebrow">QUICK SEARCH</p><h1>{submittedQuery ? `“${submittedQuery}” 검색 결과` : "전체 기록"}</h1><p>{searchResults.length}개의 기록이 검색되었습니다.</p></div></div>{loading ? <div className="loading-state">기록을 불러오는 중…</div> : searchResults.length ? <div className="results-layout"><div className="result-list">{searchResults.map(record => <button className="result-card" key={record.id} onClick={() => setSelectedRecord(record)}><div className="result-meta"><span className="source-pill">기록 · v{record.version}</span><span>{dateLabel(record.createdAt)}</span></div><h2>{record.title}</h2><p>{record.contentMarkdown.slice(0, 360)}</p><span className="result-open">원본 기록 보기 →</span></button>)}</div><aside className="search-assist"><span className="assist-gem">✦</span><p className="eyebrow">NEXT STEP</p><h2>찾은 경험을<br />경력기술서로 이어보세요.</h2><p>기록을 바탕으로 작성 단계를 제안하고, 원본 근거를 확인할 수 있습니다.</p><button className="button primary full-width" disabled={!experienceRecords.length || busy} onClick={() => void generateProposal()}>{busy ? "제안 만드는 중…" : "작성 단계 제안 받기 →"}</button><button className="button secondary full-width" onClick={() => setPage("studio")}>경력기술서</button></aside></div> : <EmptyState icon="⌕" title="검색 결과가 없습니다" copy="검색어를 바꾸거나 기록 보관함에 경험을 추가해 보세요." action={<><button className="button secondary" onClick={openImport}>기록 가져오기</button><button className="button primary" onClick={openNewRecord}>직접 기록하기</button></>} />}</main>}
 
-      {page === "archive" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">RECORD ARCHIVE</p><h1>내 경험</h1><p>경력기술서의 근거가 될 프로젝트 경험과 결과를 확인합니다.</p></div><div className="title-actions"><button className="button secondary" onClick={openNewRecord}>＋ 직접 입력</button><button className="button primary" onClick={openImport}>↥ Markdown 가져오기</button></div></div><div className="archive-toolbar"><span>전체 기록 <strong>{experienceRecords.length}</strong></span><span className="toolbar-note">원본 경험을 확인하고 경력기술서 근거로 선택하세요.</span></div>{loading ? <div className="loading-state">기록을 불러오는 중…</div> : experienceRecords.length ? <div className="archive-grid">{experienceRecords.map(record => <button className="archive-card" key={record.id} onClick={() => setSelectedRecord(record)}><div className="archive-card-top"><span className="source-pill">기록 · v{record.version}</span><span>{dateLabel(record.createdAt)}</span></div><h2>{record.title}</h2><p>{record.contentMarkdown.slice(0, 230)}{record.contentMarkdown.length > 230 ? "…" : ""}</p><div className="archive-card-foot"><span>{record.tags?.length ? record.tags.join(" · ") : "Markdown 기록"}</span><span>원본 열기 →</span></div></button>)}</div> : <EmptyState icon="▤" title="아직 저장된 기록이 없어요" copy="Markdown 파일을 가져오거나 업무 경험을 직접 적어보세요." action={<><button className="button secondary" onClick={openNewRecord}>직접 기록하기</button><button className="button primary" onClick={openImport}>Markdown 가져오기</button></>} />}</main>}
+      {page === "archive" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">RECORD ARCHIVE</p><h1>내 경험</h1><p>경력기술서의 근거가 될 프로젝트 경험과 결과를 확인합니다.</p></div><div className="title-actions"><button className="button secondary" onClick={openNewRecord}>＋ 직접 입력</button><button className="button primary" onClick={openImport}>↥ 기록 가져오기</button></div></div><div className="archive-toolbar"><span>전체 기록 <strong>{experienceRecords.length}</strong></span><span className="toolbar-note">원본 경험을 확인하고 경력기술서 근거로 선택하세요.</span></div>{loading ? <div className="loading-state">기록을 불러오는 중…</div> : experienceRecords.length ? <div className="archive-grid">{experienceRecords.map(record => <button className="archive-card" key={record.id} onClick={() => setSelectedRecord(record)}><div className="archive-card-top"><span className="source-pill">기록 · v{record.version}</span><span>{dateLabel(record.createdAt)}</span></div><h2>{record.title}</h2><p>{record.contentMarkdown.slice(0, 230)}{record.contentMarkdown.length > 230 ? "…" : ""}</p><div className="archive-card-foot"><span>{record.tags?.length ? record.tags.join(" · ") : "Markdown 기록"}</span><span>원본 열기 →</span></div></button>)}</div> : <EmptyState icon="▤" title="아직 저장된 기록이 없어요" copy="Markdown 파일을 가져오거나 업무 경험을 직접 적어보세요." action={<><button className="button secondary" onClick={openNewRecord}>직접 기록하기</button><button className="button primary" onClick={openImport}>Markdown 가져오기</button></>} />}</main>}
 
-      {page === "import" && <main className="page inner-page import-page"><button className="back-link" onClick={() => setPage("archive")}>← 기록 보관함</button><div className="page-title"><div><p className="eyebrow">ADD TO YOUR ARCHIVE</p><h1>기록 가져오기</h1><p>Markdown 원문을 보관함에 추가합니다. 원본 내용은 그대로 저장됩니다.</p></div></div><div className="import-tabs"><button className={importMode === "files" ? "selected" : ""} onClick={() => setImportMode("files")}>파일 가져오기</button><button className={importMode === "write" ? "selected" : ""} onClick={() => setImportMode("write")}>직접 입력</button></div><form className="import-panel" onSubmit={importMarkdown}><label className="field-label world-project-field">프로젝트 연결 <span className="label-hint">선택 사항 ? 파일은 모두 같은 프로젝트에 연결</span><input value={importProject} onChange={event => setImportProject(event.target.value)} placeholder="예: 정산 시스템" /></label>{importMode === "files" ? <><label className="drop-zone"><input type="file" accept=".md,text/markdown" multiple onChange={event => void filesChanged(event)} /><span className="drop-icon">↥</span><strong>Markdown 파일을 선택하세요</strong><small>여러 개의 .md 파일을 한 번에 가져올 수 있습니다.</small><span className="button secondary">파일 선택</span></label>{importFiles.length > 0 && <div className="selected-files"><div className="plan-heading"><strong>가져올 파일</strong><span>{importFiles.length}개</span></div>{importFiles.map(file => <div className="file-row" key={`${file.name}-${file.size}`}><span>▤</span><strong>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></div>)}</div>}</> : <><label className="field-label">제목<input value={importTitle} onChange={event => setImportTitle(event.target.value)} placeholder="예: 검색 전환 개선 회고" required /></label><label className="field-label">프로젝트 / 주제 태그 <span className="label-hint">쉼표로 구분</span><input value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="project:정산 시스템, 회고" /></label><label className="field-label">내용 <span className="label-hint">Markdown 지원</span><textarea className="large-textarea" value={importContent} onChange={event => setImportContent(event.target.value)} placeholder={"상황, 내가 한 일, 결과를 자유롭게 적어보세요.\n\n## 상황\n\n## 내가 한 일\n\n## 결과"} rows={12} required /></label></>}<div className="import-footnote"><span>ⓘ</span><p>가져온 내용은 원문 기록으로 저장됩니다. 구조화된 분석과 AI 제안은 이후 단계에서 별도로 검토할 수 있습니다.</p></div><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("archive")}>취소</button><button type="submit" className="button primary" disabled={busy || (importMode === "files" ? !importFiles.length : !importTitle.trim() || !importContent.trim())}>{busy ? "가져오는 중…" : importMode === "files" ? `${importFiles.length || ""}개 파일 가져오기` : "기록 저장"}</button></div></form></main>}
+      {page === "import" && <main className="page inner-page import-page">
+        <button className="back-link" disabled={busy} onClick={() => setPage("archive")}>← 기록 보관함</button>
+        <div className="page-title"><div><p className="eyebrow">ADD TO YOUR ARCHIVE</p><h1>기록 가져오기</h1><p>Notion 내보내기 ZIP이나 Markdown 파일을 보관함에 추가합니다.</p></div></div>
+        <div className="import-tabs">
+          <button type="button" disabled={busy} className={importMode === "notion" ? "selected" : ""} onClick={() => setImportMode("notion")}>Notion ZIP</button>
+          <button type="button" disabled={busy} className={importMode === "files" ? "selected" : ""} onClick={() => setImportMode("files")}>Markdown 파일</button>
+          <button type="button" disabled={busy} className={importMode === "write" ? "selected" : ""} onClick={() => setImportMode("write")}>직접 입력</button>
+        </div>
+        <form className="import-panel" onSubmit={importMarkdown} aria-busy={busy}>
+          <label className="field-label world-project-field">프로젝트 연결 <span className="label-hint">선택 사항 · 모든 페이지를 같은 프로젝트에 연결</span><input maxLength={100} disabled={busy} value={importProject} onChange={event => setImportProject(event.target.value)} placeholder="예: 정산 시스템" /></label>
+          {importMode === "notion" ? <>
+            <p>Notion에서 가져올 페이지의 메뉴 → 내보내기 → <strong>Markdown &amp; CSV</strong>를 선택하고, 하위 페이지 포함을 켜세요. 내려받은 ZIP을 압축 해제하지 않고 선택하면 됩니다.</p>
+            <label className="drop-zone"><input type="file" accept=".zip,application/zip" disabled={busy} onChange={event => setNotionZip(event.target.files?.[0] ?? null)} /><span className="drop-icon">↥</span><strong>Notion ZIP 파일을 선택하세요</strong><small>ZIP 4 MiB 이하 · Markdown 최대 2,000페이지 · 압축 해제 후 총 25 MiB</small><span className="button secondary">ZIP 선택</span></label>
+            {notionZip && <div className="selected-files"><div className="file-row"><span>▤</span><strong>{notionZip.name}</strong><small>{Math.max(1, Math.round(notionZip.size / 1024))} KB</small></div></div>}
+            <p className="muted-copy">페이지 본문과 속성, 원본 경로를 저장합니다. CSV 목록·이미지·첨부파일은 제외하며, 첨부 링크는 원문 그대로 남습니다. 같은 페이지와 본문은 중복 저장하지 않습니다. 본문이 바뀐 페이지는 기존 기록을 덮어쓰지 않고 새 기록으로 저장합니다.</p>
+          </> : importMode === "files" ? <>
+            <label className="drop-zone"><input type="file" accept=".md,text/markdown" multiple disabled={busy} onChange={event => void filesChanged(event)} /><span className="drop-icon">↥</span><strong>Markdown 파일을 선택하세요</strong><small>여러 개의 .md 파일을 한 번에 가져올 수 있습니다.</small><span className="button secondary">파일 선택</span></label>
+            {importFiles.length > 0 && <div className="selected-files"><div className="plan-heading"><strong>가져올 파일</strong><span>{importFiles.length}개</span></div>{importFiles.map(file => <div className="file-row" key={`${file.name}-${file.size}`}><span>▤</span><strong>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></div>)}</div>}
+          </> : <>
+            <label className="field-label">제목<input disabled={busy} value={importTitle} onChange={event => setImportTitle(event.target.value)} placeholder="예: 검색 전환 개선 회고" required /></label>
+            <label className="field-label">프로젝트 / 주제 태그 <span className="label-hint">쉼표로 구분</span><input disabled={busy} value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="project:정산 시스템, 회고" /></label>
+            <label className="field-label">내용 <span className="label-hint">Markdown 지원</span><textarea disabled={busy} className="large-textarea" value={importContent} onChange={event => setImportContent(event.target.value)} placeholder="상황, 내가 한 일, 결과를 자유롭게 적어보세요." rows={12} required /></label>
+          </>}
+          <div className="import-footnote"><span>ⓘ</span><p>{importMode === "notion" ? "저장 실패 시 이번 ZIP의 적재는 전체 취소됩니다. 가져온 기록은 내 계정에만 저장됩니다." : "가져온 내용은 원문 기록으로 저장됩니다. 구조화된 분석과 AI 제안은 이후 단계에서 별도로 검토할 수 있습니다."}</p></div>
+          {busy && <p role="status">{importMode === "notion" ? "ZIP을 확인하고 페이지를 일괄 저장하는 중입니다…" : "기록을 가져오는 중입니다…"}</p>}
+          <div className="form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setPage("archive")}>취소</button><button type="submit" className="button primary" disabled={busy || (importMode === "notion" ? !notionZip : importMode === "files" ? !importFiles.length : !importTitle.trim() || !importContent.trim())}>{busy ? "가져오는 중…" : importMode === "notion" ? "Notion 페이지 한 번에 가져오기" : importMode === "files" ? `${importFiles.length || ""}개 파일 가져오기` : "기록 저장"}</button></div>
+        </form>
+      </main>}
 
       {page === "quests" && <main className="page inner-page"><div className="page-title"><div><p className="eyebrow">03 · REVIEW & APPROVE</p><h1>결과물 검토 및 승인</h1><p>선택한 Epic: {epic?.title}</p></div><button className="button primary" onClick={openAgent}>{agentSession ? "NPC 대화 이어가기" : "새 결과물 만들기"}</button></div>
         {agentSession?.state === "PROPOSAL_PENDING" && <div className="goal-banner"><p>NPC가 만든 결과물이 검토를 기다리고 있어요.</p><button className="button primary" onClick={() => setPage("agent")}>결과물 검토하기 →</button></div>}
