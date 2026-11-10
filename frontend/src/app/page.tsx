@@ -285,7 +285,7 @@ export default function App() {
     try {
       if (importMode === "notion") {
         if (!notionZip || !notionZip.name.toLowerCase().endsWith(".zip")) throw new Error("Notion에서 내보낸 ZIP 파일을 선택해 주세요.")
-        if (notionZip.size > 4 * 1024 * 1024) throw new Error("ZIP 파일은 4 MiB 이하로 선택해 주세요.")
+        if (notionZip.size > 4 * 1024 * 1024) throw new Error("ZIP 파일이 4 MiB를 초과했습니다. Notion에서 페이지나 프로젝트를 나누어 여러 개의 ZIP으로 내보낸 뒤 각각 업로드해 주세요.")
         const form = new FormData()
         form.append("file", notionZip)
         form.append("project", importProject.trim())
@@ -509,10 +509,10 @@ export default function App() {
         <form className="import-panel" onSubmit={importMarkdown} aria-busy={busy}>
           <label className="field-label world-project-field">프로젝트 연결 <span className="label-hint">선택 사항 · 모든 페이지를 같은 프로젝트에 연결</span><input maxLength={100} disabled={busy} value={importProject} onChange={event => setImportProject(event.target.value)} placeholder="예: 정산 시스템" /></label>
           {importMode === "notion" ? <>
-            <p>Notion에서 가져올 페이지의 메뉴 → 내보내기 → <strong>Markdown &amp; CSV</strong>를 선택하고, 하위 페이지 포함을 켜세요. 내려받은 ZIP을 압축 해제하지 않고 선택하면 됩니다.</p>
+            <div className="import-guide" role="note"><strong>Notion에서 이렇게 내보내세요</strong><ul><li>메뉴 → 내보내기 → <b>Markdown &amp; CSV</b> 선택</li><li><b>하위 페이지 포함</b> 켜기</li><li>내려받은 ZIP은 압축 해제하지 않고 그대로 선택</li></ul></div>
             <label className="drop-zone"><input type="file" accept=".zip,application/zip" disabled={busy} onChange={event => setNotionZip(event.target.files?.[0] ?? null)} /><span className="drop-icon">↥</span><strong>Notion ZIP 파일을 선택하세요</strong><small>ZIP 4 MiB 이하 · Markdown 최대 2,000페이지 · 압축 해제 후 총 25 MiB</small><span className="button secondary">ZIP 선택</span></label>
             {notionZip && <div className="selected-files"><div className="file-row"><span>▤</span><strong>{notionZip.name}</strong><small>{Math.max(1, Math.round(notionZip.size / 1024))} KB</small></div></div>}
-            <p className="muted-copy">페이지 본문과 속성, 원본 경로를 저장합니다. CSV 목록·이미지·첨부파일은 제외하며, 첨부 링크는 원문 그대로 남습니다. 같은 페이지와 본문은 중복 저장하지 않습니다. 본문이 바뀐 페이지는 기존 기록을 덮어쓰지 않고 새 기록으로 저장합니다.</p>
+            <div className="import-guide secondary-guide" role="note"><strong>가져오기 전에 확인하세요</strong><ul><li>페이지 본문·속성·원본 경로를 저장합니다.</li><li>이미지·PDF·첨부파일은 가져오지 않으며, 첨부 링크만 원문에 남습니다.</li><li>ZIP은 <b>4 MiB 이하</b>여야 합니다. 크면 페이지나 프로젝트를 나누어 여러 번 업로드하세요.</li><li>같은 페이지와 본문은 중복 저장하지 않으며, 기존 기록을 덮어쓰지 않습니다.</li><li>저장 중 오류가 나면 이번 ZIP 전체 적재가 취소됩니다.</li></ul></div>
           </> : importMode === "files" ? <>
             <label className="drop-zone"><input type="file" accept=".md,text/markdown" multiple disabled={busy} onChange={event => void filesChanged(event)} /><span className="drop-icon">↥</span><strong>Markdown 파일을 선택하세요</strong><small>여러 개의 .md 파일을 한 번에 가져올 수 있습니다.</small><span className="button secondary">파일 선택</span></label>
             {importFiles.length > 0 && <div className="selected-files"><div className="plan-heading"><strong>가져올 파일</strong><span>{importFiles.length}개</span></div>{importFiles.map(file => <div className="file-row" key={`${file.name}-${file.size}`}><span>▤</span><strong>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></div>)}</div>}
@@ -522,7 +522,7 @@ export default function App() {
             <label className="field-label">내용 <span className="label-hint">Markdown 지원</span><textarea disabled={busy} className="large-textarea" value={importContent} onChange={event => setImportContent(event.target.value)} placeholder="상황, 내가 한 일, 결과를 자유롭게 적어보세요." rows={12} required /></label>
           </>}
           <div className="import-footnote"><span>ⓘ</span><p>{importMode === "notion" ? "저장 실패 시 이번 ZIP의 적재는 전체 취소됩니다. 가져온 기록은 내 계정에만 저장됩니다." : "가져온 내용은 원문 기록으로 저장됩니다. 구조화된 분석과 AI 제안은 이후 단계에서 별도로 검토할 수 있습니다."}</p></div>
-          {busy && <p role="status">{importMode === "notion" ? "ZIP을 확인하고 페이지를 일괄 저장하는 중입니다…" : "기록을 가져오는 중입니다…"}</p>}
+          {busy && <p className="import-progress" role="status">{importMode === "notion" ? "ZIP을 확인하고 페이지를 일괄 저장하는 중입니다… 창을 닫거나 버튼을 다시 누르지 마세요." : "기록을 가져오는 중입니다…"}</p>}
           <div className="form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setPage("archive")}>취소</button><button type="submit" className="button primary" disabled={busy || (importMode === "notion" ? !notionZip : importMode === "files" ? !importFiles.length : !importTitle.trim() || !importContent.trim())}>{busy ? "가져오는 중…" : importMode === "notion" ? "Notion 페이지 한 번에 가져오기" : importMode === "files" ? `${importFiles.length || ""}개 파일 가져오기` : "기록 저장"}</button></div>
         </form>
       </main>}
