@@ -88,7 +88,7 @@ public class ApiController {
             recordIds.add(recordId.toString());
         }
         UUID sessionId=UUID.randomUUID();
-        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",recordIds); context.put("answers",new LinkedHashMap<>());
+        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",recordIds); context.put("candidateRecordIds",recordIds); context.put("answers",new LinkedHashMap<>());
         db.update("INSERT INTO agent_session(id,user_id,epic_id,use_case,state,context_json) VALUES (?,?,?,?,'INTERPRETING',?::jsonb)",sessionId,userId(),activeEpic.get("id"),selectedUseCase,json(context));
         Map<String,Object> interpreted=interpretSession(sessionId,selectedUseCase,activeEpic,context);
         return saveSessionResponse(sessionId,interpreted);
@@ -118,11 +118,26 @@ public class ApiController {
                 if(value.equals(choice.get("id"))) { value=Objects.toString(choice.get("label")); break; }
             }
         }
+        if("project-selection".equals(cardId)) {
+            String selectedValue=value;
+            boolean offered=((List<?>)card.getOrDefault("options",null)).stream()
+                    .anyMatch(option -> selectedValue.equals(((Map<?,?>)option).get("id")));
+            if(!offered) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Select an offered project group");
+            List<String> selectedIds=Arrays.asList(value.split(","));
+            List<?> candidates=(List<?>)context.getOrDefault("candidateRecordIds",context.get("recordIds"));
+            if(selectedIds.isEmpty() || !candidates.stream().map(Object::toString).toList().containsAll(selectedIds))
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid project records");
+            context.putIfAbsent("candidateRecordIds",context.get("recordIds"));
+            context.put("recordIds",selectedIds);
+            answers=new LinkedHashMap<>(); // A new target requires new role/fact/evidence confirmation.
+        }
         answers.put(cardId,value);
         if("additional-context".equals(cardId)) {
             UUID recordId=UUID.randomUUID();
             db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,'[]'::jsonb)",recordId,userId(),"대화에서 보완한 기록",value);
             context.put("recordIds",List.of(recordId.toString()));
+            context.put("candidateRecordIds",List.of(recordId.toString()));
+            answers.remove("project-selection");
             answers.remove("source-check");
             answers.remove("facts-check");
         }
@@ -131,6 +146,8 @@ public class ApiController {
         Map<String,Object> activeEpic=activeEpic(selectedUseCase);
         boolean ready=answers.containsKey("role") || answers.containsKey("learning-level");
         ready=ready && "confirm".equals(answers.get("facts-check")) && "confirm".equals(answers.get("source-check"));
+        // Resumed multi-record sessions must also pass the new target-selection step.
+        ready=ready && (((List<?>)context.getOrDefault("recordIds",List.of())).size()<=1 || answers.containsKey("project-selection"));
         if(ready) {
             Map<String,Object> proposalResult=generateForContext(Map.of("epicId",Objects.toString(activeEpic.get("id"))),context);
             List<?> proposals=(List<?>)proposalResult.getOrDefault("proposals",List.of());
@@ -302,7 +319,7 @@ public class ApiController {
     }
 
     private Map<String,Object> interpretSession(UUID sessionId,String selectedUseCase,Map<String,Object> activeEpic,Map<String,Object> context) {
-        List<String> ids=((List<?>)context.getOrDefault("recordIds",List.of())).stream().map(Object::toString).toList();
+        List<String> ids=((List<?>)context.getOrDefault("candidateRecordIds",context.getOrDefault("recordIds",List.of()))).stream().map(Object::toString).toList();
         List<Map<String,Object>> records=ids.stream().map(id -> record(UUID.fromString(id))).toList();
         Map<String,Object> payload=new LinkedHashMap<>(); payload.put("sessionId",sessionId.toString()); payload.put("useCase",selectedUseCase); payload.put("userContext",profile()); payload.put("records",records); payload.put("answers",context.getOrDefault("answers",Map.of()));
         try {

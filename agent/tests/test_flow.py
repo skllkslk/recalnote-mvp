@@ -23,6 +23,41 @@ class AgentFlowTest(unittest.TestCase):
     def test_career_starts_with_role_question(self):
         self.assertEqual([c["id"] for c in self.interpret()["cards"]], ["role"])
 
+    def test_mixed_records_require_target_selection_without_technology_based_merge(self):
+        records = [self.record, {**self.record, "id": "other", "title": "Separate project", "contentMarkdown": "Vue API integration"}]
+        result = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records), "test-key"))
+        card = result["cards"][0]
+        self.assertEqual(card["id"], "project-selection")
+        self.assertEqual([option["id"] for option in card["options"]], ["record-1", "other"])
+        selected = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records, answers={"project-selection": "record-1", "role": "debug"}), "test-key"))
+        facts = selected["cards"][-1]
+        self.assertIn(self.record["contentMarkdown"], facts["value"])
+        self.assertNotIn("Vue API integration", facts["value"])
+        self.assertEqual([source["recordId"] for source in facts["sourceRefs"]], ["record-1"])
+
+    def test_explicit_project_groups_confirm_every_record_and_allow_reselection(self):
+        records = [{**self.record, "tags": '["project:Twin"]'}, {**self.record, "id": "second", "title": "Tests", "contentMarkdown": "Regression results", "tags": ["project:Twin"]}]
+        answers = {"project-selection": "record-1,second", "role": "debug", "facts-check": "confirm"}
+        result = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records, answers=answers), "test-key"))
+        self.assertEqual(result["cards"][0]["id"], "project-selection")
+        self.assertEqual(len(result["cards"][0]["options"]), 1)
+        self.assertEqual([source["recordId"] for source in result["cards"][-1]["sourceRefs"]], ["record-1", "second"])
+        self.assertIn("Regression results", result["cards"][-1]["value"])
+
+    def test_unknown_project_selection_does_not_advance(self):
+        records = [self.record, {**self.record, "id": "other"}]
+        result = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records, answers={"project-selection": "unknown", "role": "debug", "facts-check": "confirm"}), "test-key"))
+        self.assertEqual([card["id"] for card in result["cards"]], ["project-selection"])
+
+    def test_internal_source_labels_are_removed_but_evidence_is_retained(self):
+        from app.main import ProposalOutput, _filter_proposals
+        result = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        proposal = result["proposals"][0]
+        proposal["resultMarkdown"] = "# Work\nA concrete action.\n[source-3-1, source-3-2]"
+        filtered = _filter_proposals(ProposalOutput(proposals=[proposal]), [self.record])
+        self.assertNotIn("source-3", filtered[0]["resultMarkdown"])
+        self.assertEqual(filtered[0]["evidence"], proposal["evidence"])
+
     def test_learning_starts_with_level_question(self):
         self.assertEqual([c["id"] for c in self.interpret(use_case="LEARNING")["cards"]], ["learning-level"])
 

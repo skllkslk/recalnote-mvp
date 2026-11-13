@@ -15,6 +15,13 @@ After importing, choose **이 기록으로 결과물 만들기** in **내 경험
 then select up to 20 saved records on the NPC screen. New text is optional when records are selected.
 The NPC session uses the original record IDs without creating copies; confirm the facts and evidence,
 review the generated Markdown, and approve it to save the result.
+When multiple records are supplied, the NPC first asks which writing target to use.
+Only matching explicit `project:` tags or `프로젝트명:` / `프로젝트 이름:` / `Project name:` fields
+are automatically grouped. Records without those labels remain separate; shared technologies alone
+do not establish a project relationship. Choose another target from the project card to reset the
+role, facts, and evidence confirmations. Only the chosen target's records reach result generation.
+Fact and evidence cards cover every record in that target and provide original-record buttons.
+Project selection requires coordinated Agent, backend, and frontend deployment; no migration is required.
 This route requires both the backend and frontend updates: `POST /api/v1/agent-sessions` accepts
 optional `recordIds` alongside optional `contentMarkdown`, and requires at least one source.
 
