@@ -36,55 +36,25 @@ pnpm dev
 
 Open `http://localhost:3000`. The Next.js `/api/v1/*` route proxies requests to Spring at `http://localhost:8080` by default. Set `API_BASE_URL` for the Next.js process only if Spring is at a different address.
 
-## Exercise one quest cycle in the UI
+## Exercise one result cycle in the UI
 
-1. Add one experience record with a specific problem, what you changed, and how you verified it.
-2. Choose **제안 생성**. In mock mode, the Agent proposes a general verification and regression-prevention plan based on the newest eligible record.
-3. On **퀘스트 제안 검토**, review the objective, 2–5 steps, completion criterion, and evidence excerpt. Edit any field or add/remove steps as needed.
-4. Choose **수정 내용으로 수락**. Spring stores the edited quest, evidence links, and creation event transactionally.
-5. Open **내 퀘스트** and confirm that the same steps and completion criterion are shown.
-6. To check rejection, generate another proposal and choose **거절**. It should appear in completed reviews without creating a quest.
+1. Select and save a Career or Learning Epic.
+2. Add/import records, then choose the result creation action in the archive or search screen.
+3. Select saved records and optionally add explanatory text. That text supplements the selected target.
+4. If multiple candidate records exist, select the project group. Confirm the role, facts and source evidence.
+5. Use the supplement action to add/correct facts while preserving originals. The explicit replacement action starts with a new source instead.
+6. Review and edit the generated Markdown, then approve it.
+7. Open the results screen and verify the saved body and every evidence passage. Reload and verify persistence.
+8. To test rejection, generate another result and reject it; no new approved result should be created.
 
-Existing proposals created before Flyway V2 have empty step and completion fields. Fill these fields in the review card before accepting one, or generate a new proposal.
+The old direct `POST /api/v1/agent/quest-proposals` endpoint returns 410. All generation now goes
+through NPC target/fact/evidence confirmation. The README contains a single-record local API example;
+production mutations also require the normal authenticated session and CSRF token.
 
-## Exercise the API with PowerShell
-
-The local profile uses `DEV_USER_ID`, so no login header is required. These commands create a record and proposal; accepting the proposal also writes a quest to the local database.
-
-```powershell
-$record = @{
-  title = "Authorization regression fix"
-  contentMarkdown = "Fixed a missing permission check and verified the endpoint."
-  tags = @("learning")
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8080/api/v1/records" `
-  -ContentType "application/json" -Body $record
-
-$epic = Invoke-RestMethod -Uri "http://localhost:8080/api/v1/epics/active"
-$run = @{ epicId = $epic.id } | ConvertTo-Json
-$generated = Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8080/api/v1/agent/quest-proposals" `
-  -ContentType "application/json" -Body $run
-
-$proposal = $generated.proposals | Where-Object status -eq "PENDING" | Select-Object -First 1
-$decision = @{
-  action = "ACCEPT_EDITED"
-  editedTitle = $proposal.title
-  editedDescription = $proposal.description
-  editedSteps = $proposal.steps
-  editedCompletionCriteria = $proposal.completionCriteria
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8080/api/v1/quest-proposals/$($proposal.id)/decisions" `
-  -ContentType "application/json" -Body $decision
-
-Invoke-RestMethod -Uri "http://localhost:8080/api/v1/quests"
-```
-
-The API sequence is intended for a single fresh run. If there are several pending proposals, select the one created in that run before deciding.
+For database-backed evidence migration and approval checks, use a disposable database with
+`TEST_DB_URL`, `TEST_DB_USER`, and `TEST_DB_PASSWORD`, then run `mvn test` under JDK 17.
+See [result quality evaluation](result-quality-evaluation.md) for offline cases, saved-response checks,
+and optional live OpenAI evaluation.
 
 ## Use OpenAI mode
 

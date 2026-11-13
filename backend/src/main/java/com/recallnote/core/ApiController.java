@@ -36,7 +36,7 @@ public class ApiController {
         return ResponseEntity.status(201).body(record(id));
     }
     @GetMapping("/records") public List<Map<String,Object>> records() {
-        return db.queryForList("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at DESC",userId());
+        return db.queryForList("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at DESC",userId()).stream().map(ApiController::normalizeRecord).toList();
     }
     @GetMapping("/records/{id}") public Map<String,Object> get(@PathVariable UUID id) { return record(id); }
     @PutMapping("/records/{id}") public Map<String,Object> update(@PathVariable UUID id,@RequestBody Map<String,Object> b) {
@@ -81,14 +81,18 @@ public class ApiController {
         if(capture.isBlank() && recordIds.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Select records or enter contentMarkdown");
         String selectedUseCase=normalizedUseCase(body.getOrDefault("useCase",useCase()));
         Map<String,Object> activeEpic=activeEpic(selectedUseCase);
+        List<String> candidateIds=new ArrayList<>(recordIds);
+        List<String> initialSupplementIds=new ArrayList<>();
         if(!capture.isBlank()) {
             UUID recordId=UUID.randomUUID();
             String title=Objects.toString(body.getOrDefault("title", selectedUseCase.equals("LEARNING") ? "학습 재료" : "경험 기록"),"").trim();
             db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,?::jsonb)",recordId,userId(),title.isBlank()?"경험 기록":title,capture,json(body.getOrDefault("tags",List.of())));
             recordIds.add(recordId.toString());
+            if(candidateIds.isEmpty()) candidateIds.add(recordId.toString());
+            else initialSupplementIds.add(recordId.toString());
         }
         UUID sessionId=UUID.randomUUID();
-        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",recordIds); context.put("candidateRecordIds",recordIds); context.put("answers",new LinkedHashMap<>());
+        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",recordIds); context.put("candidateRecordIds",candidateIds); context.put("initialSupplementIds",initialSupplementIds); context.put("answers",new LinkedHashMap<>());
         db.update("INSERT INTO agent_session(id,user_id,epic_id,use_case,state,context_json) VALUES (?,?,?,?,'INTERPRETING',?::jsonb)",sessionId,userId(),activeEpic.get("id"),selectedUseCase,json(context));
         Map<String,Object> interpreted=interpretSession(sessionId,selectedUseCase,activeEpic,context);
         return saveSessionResponse(sessionId,interpreted);
@@ -109,7 +113,7 @@ public class ApiController {
         Map<?,?> card=cards.stream().filter(c -> cardId.equals(((Map<?,?>)c).get("id"))).map(c -> (Map<?,?>)c).findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,"Unknown card"));
         String value=required(body,"value").trim();
         if(value.length()>8000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Answer too long");
-        if("source-check".equals(cardId) && !Set.of("confirm","replace","none").contains(value)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid evidence decision");
+        if("source-check".equals(cardId) && !Set.of("confirm","supplement","replace","none").contains(value)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid evidence decision");
         if("facts-check".equals(cardId) && !Set.of("confirm","edit").contains(value)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid confirmation");
         if("free_text".equals(value)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Enter an answer first");
         if(Set.of("role","learning-level").contains(cardId)) {
@@ -128,16 +132,32 @@ public class ApiController {
             if(selectedIds.isEmpty() || !candidates.stream().map(Object::toString).toList().containsAll(selectedIds))
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid project records");
             context.putIfAbsent("candidateRecordIds",context.get("recordIds"));
-            context.put("recordIds",selectedIds);
+            List<String> targetIds=new ArrayList<>(selectedIds);
+            for(Object extra:(List<?>)context.getOrDefault("initialSupplementIds",List.of())) if(!targetIds.contains(extra.toString())) targetIds.add(extra.toString());
+            Map<String,Object> supplements=parseObject(context.get("supplementsByTarget"));
+            for(Object extra:(List<?>)supplements.getOrDefault(value,List.of())) if(!targetIds.contains(extra.toString())) targetIds.add(extra.toString());
+            context.put("recordIds",targetIds);
             answers=new LinkedHashMap<>(); // A new target requires new role/fact/evidence confirmation.
         }
         answers.put(cardId,value);
-        if("additional-context".equals(cardId)) {
+        if(Set.of("additional-context","replacement-context").contains(cardId)) {
             UUID recordId=UUID.randomUUID();
             db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,'[]'::jsonb)",recordId,userId(),"대화에서 보완한 기록",value);
-            context.put("recordIds",List.of(recordId.toString()));
-            context.put("candidateRecordIds",List.of(recordId.toString()));
-            answers.remove("project-selection");
+            if("replacement-context".equals(cardId)) {
+                context.put("recordIds",List.of(recordId.toString()));
+                context.put("candidateRecordIds",List.of(recordId.toString()));
+                context.put("initialSupplementIds",List.of());
+                context.put("supplementsByTarget",Map.of());
+                answers=new LinkedHashMap<>();
+            } else {
+                List<String> targetIds=new ArrayList<>(((List<?>)context.get("recordIds")).stream().map(Object::toString).toList());
+                targetIds.add(recordId.toString());
+                context.put("recordIds",targetIds);
+                String target=Objects.toString(answers.getOrDefault("project-selection","single"));
+                Map<String,Object> supplements=parseObject(context.get("supplementsByTarget"));
+                List<String> extras=new ArrayList<>(((List<?>)supplements.getOrDefault(target,List.of())).stream().map(Object::toString).toList());
+                extras.add(recordId.toString()); supplements.put(target,extras); context.put("supplementsByTarget",supplements);
+            }
             answers.remove("source-check");
             answers.remove("facts-check");
         }
@@ -147,7 +167,7 @@ public class ApiController {
         boolean ready=answers.containsKey("role") || answers.containsKey("learning-level");
         ready=ready && "confirm".equals(answers.get("facts-check")) && "confirm".equals(answers.get("source-check"));
         // Resumed multi-record sessions must also pass the new target-selection step.
-        ready=ready && (((List<?>)context.getOrDefault("recordIds",List.of())).size()<=1 || answers.containsKey("project-selection"));
+        ready=ready && (((List<?>)context.getOrDefault("candidateRecordIds",context.getOrDefault("recordIds",List.of()))).size()<=1 || answers.containsKey("project-selection"));
         if(ready) {
             Map<String,Object> proposalResult=generateForContext(Map.of("epicId",Objects.toString(activeEpic.get("id"))),context);
             List<?> proposals=(List<?>)proposalResult.getOrDefault("proposals",List.of());
@@ -188,8 +208,8 @@ public class ApiController {
         return Map.of("sessionId",id,"state","REJECTED");
     }
 
-    @PostMapping("/agent/quest-proposals") @Transactional public Map<String,Object> generate(@RequestBody Map<String,String> body) {
-        return generateForContext(body,Map.of());
+    @PostMapping("/agent/quest-proposals") public Map<String,Object> generate(@RequestBody Map<String,String> body) {
+        throw new ResponseStatusException(HttpStatus.GONE,"Start an NPC session and confirm project records before generation");
     }
     private Map<String,Object> generateForContext(Map<String,String> body,Map<String,Object> context) {
         UUID epicId=UUID.fromString(body.get("epicId"));
@@ -198,16 +218,13 @@ public class ApiController {
         catch (org.springframework.dao.EmptyResultDataAccessException ex) { throw new NotFoundException(); }
         String selectedUseCase=normalizedUseCase(e.get("use_case"));
         UUID runId=UUID.randomUUID(); db.update("INSERT INTO agent_run(id,user_id,epic_id,status) VALUES (?,?,?,'RUNNING')",runId,userId(),epicId);
-        String recordFilter=selectedUseCase.equals("LEARNING") ? "" : " AND NOT (tags_json @> '[\"learning-note\"]'::jsonb)";
-        List<Map<String,Object>> rs=db.queryForList("SELECT id,title,content_markdown,version FROM record WHERE user_id=? AND deleted_at IS NULL"+recordFilter+" ORDER BY updated_at DESC LIMIT 20",userId());
-        if(context.containsKey("recordIds")) {
-            List<?> ids=(List<?>)context.get("recordIds");
-            rs=ids.stream().map(id -> {
+        List<?> ids=(List<?>)context.getOrDefault("recordIds",List.of());
+        if(ids.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Select source records first");
+        List<Map<String,Object>> rs=ids.stream().map(id -> {
                 Map<String,Object> r=new LinkedHashMap<>(record(UUID.fromString(id.toString())));
                 r.put("content_markdown",r.get("contentMarkdown"));
                 return r;
             }).toList();
-        }
         List<Map<String,Object>> existingQuests=db.queryForList("SELECT title,description,status FROM quest WHERE user_id=? AND epic_id=? AND status IN ('TODO','IN_PROGRESS') ORDER BY created_at DESC LIMIT 20",userId(),epicId);
         List<Map<String,Object>> profileRows=db.queryForList("SELECT display_name AS \"displayName\",COALESCE(occupation,'') AS occupation,current_goal AS \"currentGoal\",experience_summary AS \"experienceSummary\",interests_json::text AS interests FROM user_profile WHERE user_id=?",userId());
         Map<String,Object> profile=profileRows.isEmpty()?Map.of("displayName","","occupation","","currentGoal","","experienceSummary","","interests","[]"):profileRows.get(0);
@@ -281,7 +298,7 @@ public class ApiController {
         Integer stale=db.queryForObject("SELECT count(*) FROM proposal_evidence pe JOIN record r ON r.id=pe.record_id WHERE pe.proposal_id=? AND (r.version<>pe.record_version OR r.deleted_at IS NOT NULL)",Integer.class,id);
         if(stale!=null && stale>0) throw new ResponseStatusException(HttpStatus.CONFLICT,"Evidence changed; generate a new result");
         UUID q=UUID.randomUUID(); db.update("INSERT INTO quest(id,user_id,epic_id,source_proposal_id,title,description,steps_json,completion_criteria,result_markdown) VALUES (?,?,?,?,?, ?,?::jsonb,?,?)",q,userId(),p.get("epic_id"),id,title,desc,json(steps),criteria,resultMarkdown);
-        db.update("INSERT INTO quest_evidence(quest_id,record_id,record_version) SELECT ?,record_id,record_version FROM proposal_evidence WHERE proposal_id=?",q,id);
+        db.update("INSERT INTO quest_evidence(quest_id,record_id,record_version,excerpt) SELECT ?,record_id,record_version,excerpt FROM proposal_evidence WHERE proposal_id=?",q,id);
         db.update("INSERT INTO quest_event(quest_id,event_type,new_status) VALUES (?,'CREATED','TODO')",q);
         db.update("UPDATE quest_proposal SET status='ACCEPTED' WHERE id=?",id);
         db.update("UPDATE agent_session SET state='APPROVED',approved_context_json=context_json,updated_at=now() WHERE proposal_id=? AND user_id=?",id,userId());
@@ -291,7 +308,8 @@ public class ApiController {
         List<Map<String,Object>> rows=db.queryForList("SELECT id,epic_id AS \"epicId\",title,description,steps_json::text AS steps,completion_criteria AS \"completionCriteria\",result_markdown AS \"resultMarkdown\",status FROM quest WHERE user_id=? ORDER BY created_at DESC",userId());
         rows.forEach(row->{
             row.put("steps",stringList(row.get("steps")));
-            row.put("recordIds",db.queryForList("SELECT record_id FROM quest_evidence WHERE quest_id=? ORDER BY record_id",row.get("id")).stream().map(evidence->evidence.get("record_id").toString()).toList());
+            row.put("recordIds",db.queryForList("SELECT DISTINCT record_id FROM quest_evidence WHERE quest_id=? ORDER BY record_id",row.get("id")).stream().map(evidence->evidence.get("record_id").toString()).toList());
+            row.put("evidence",db.queryForList("SELECT qe.record_id AS \"recordId\",qe.record_version AS \"recordVersion\",qe.excerpt,r.title AS \"recordTitle\" FROM quest_evidence qe JOIN record r ON r.id=qe.record_id WHERE qe.quest_id=? ORDER BY qe.record_id,qe.id",row.get("id")));
         });
         return rows;
     }
@@ -322,6 +340,9 @@ public class ApiController {
         List<String> ids=((List<?>)context.getOrDefault("candidateRecordIds",context.getOrDefault("recordIds",List.of()))).stream().map(Object::toString).toList();
         List<Map<String,Object>> records=ids.stream().map(id -> record(UUID.fromString(id))).toList();
         Map<String,Object> payload=new LinkedHashMap<>(); payload.put("sessionId",sessionId.toString()); payload.put("useCase",selectedUseCase); payload.put("userContext",profile()); payload.put("records",records); payload.put("answers",context.getOrDefault("answers",Map.of()));
+        Set<String> candidateIds=new HashSet<>(ids);
+        List<Map<String,Object>> supplements=((List<?>)context.getOrDefault("recordIds",List.of())).stream().map(Object::toString).filter(id -> !candidateIds.contains(id)).map(id -> record(UUID.fromString(id))).toList();
+        payload.put("supplementRecords",supplements);
         try {
             HttpRequest request=HttpRequest.newBuilder(URI.create(agentBaseUrl+"/internal/v1/agent-sessions/interpret"))
                     .header("Content-Type","application/json").header("X-Internal-Api-Key",apiKey)
@@ -383,7 +404,13 @@ public class ApiController {
         if(!Set.of("CAREER","LEARNING").contains(result)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"useCase must be CAREER or LEARNING");
         return result;
     }
-    private Map<String,Object> record(UUID id) { try { return db.queryForMap("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId()); } catch(Exception e) { throw new NotFoundException(); } }
+    private Map<String,Object> record(UUID id) { try { return normalizeRecord(db.queryForMap("SELECT id,title,content_markdown AS \"contentMarkdown\",tags_json AS tags,source_type AS \"sourceType\",source_path AS \"sourcePath\",source_page_id AS \"sourcePageId\",version,created_at AS \"createdAt\" FROM record WHERE id=? AND user_id=? AND deleted_at IS NULL",id,userId())); } catch(Exception e) { throw new NotFoundException(); } }
+    private static Map<String,Object> normalizeRecord(Map<String,Object> row) {
+        Map<String,Object> normalized=new LinkedHashMap<>(row);
+        Object tags=row.get("tags");
+        normalized.put("tags",tags instanceof Collection<?> ? stringList(tags) : stringList(tags==null?"[]":tags.toString()));
+        return normalized;
+    }
     private static String required(Map<String,Object>b,String k) { Object v=b.get(k); if(v==null||v.toString().isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,k+" is required"); return v.toString(); }
     private static String requiredText(Object value,String field) { if(value==null||value.toString().isBlank()) throw new IllegalArgumentException(field+" is required"); return value.toString(); }
     private static List<String> stringList(Object value) {

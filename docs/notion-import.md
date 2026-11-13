@@ -21,7 +21,11 @@ are automatically grouped. Records without those labels remain separate; shared 
 do not establish a project relationship. Choose another target from the project card to reset the
 role, facts, and evidence confirmations. Only the chosen target's records reach result generation.
 Fact and evidence cards cover every record in that target and provide original-record buttons.
-Project selection requires coordinated Agent, backend, and frontend deployment; no migration is required.
+Project selection and supplementation require coordinated Agent, backend, and frontend deployment.
+Tags are normalized to arrays before the Agent receives them. Free text accompanying selected records
+is attached to the writing target; later corrections preserve its originals. Only explicit replacement
+discards the old target from the session. Flyway V9 preserves every distinct supporting passage and
+copies it to approved results; existing evidence is retained and legacy quest excerpts are backfilled.
 This route requires both the backend and frontend updates: `POST /api/v1/agent-sessions` accepts
 optional `recordIds` alongside optional `contentMarkdown`, and requires at least one source.
 
@@ -46,6 +50,7 @@ The 4 MiB upload limit leaves room for multipart overhead when proxied through V
 ## Deployment
 
 Deploy the Spring backend first, then the Next.js frontend. Flyway migration `V8__notion_import.sql` adds provenance columns and the per-user deduplication index.
+For the evidence-preservation update, deploy the Agent, then Spring (which runs V9), then the frontend.
 No new credentials or environment variables are needed; Vercel continues to use `API_BASE_URL` for Railway.
 The endpoint is `POST /api/v1/imports/notion` with multipart fields `file` (ZIP) and optional `project` (up to 100 characters).
 It requires the existing session and `X-CSRF-TOKEN`. The browser uploads via the existing same-origin proxy, preserving the multipart boundary.

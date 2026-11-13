@@ -1,0 +1,65 @@
+[
+  {
+    "id": "mixed-projects",
+    "purpose": "Keep unrelated Vue work out of the selected Twin backend project.",
+    "records": [
+      {"id": "twin-api", "version": 1, "title": "Twin registry API", "tags": ["project:Twin"], "contentMarkdown": "Project name: Twin\nI implemented a registry metadata lookup API returning JSON in Spring Boot."},
+      {"id": "twin-tests", "version": 1, "title": "Twin regression tests", "tags": ["project:Twin"], "contentMarkdown": "Project name: Twin\nI added permission regression tests for the metadata API. Authorized requests succeeded and unauthorized requests were rejected."},
+      {"id": "store-ui", "version": 1, "title": "Store UI", "tags": ["project:Store"], "contentMarkdown": "Project name: Store\nI integrated a Vue shopping cart component with the store API."}
+    ],
+    "targetRecordIds": ["twin-api", "twin-tests"],
+    "userContext": {"occupation": "Full-stack developer", "experienceSummary": "Five years of development"},
+    "role": "I implemented only the Twin backend and tests.",
+    "requiredConcepts": [["registry", "metadata"], ["permission", "authorized", "unauthorized"], ["test"]],
+    "forbiddenPhrases": ["Vue", "shopping cart", "Store UI"],
+    "requiredEvidenceRecordIds": ["twin-api", "twin-tests"]
+  },
+  {
+    "id": "outcome-without-metrics",
+    "purpose": "Use a verifiable non-numeric outcome without inventing performance metrics.",
+    "records": [{"id": "auth-fix", "version": 2, "title": "Authorization fix", "contentMarkdown": "I fixed a missing permission check in an invoice endpoint and added a regression test. The test verifies that an unauthorized user receives 403. No latency or revenue measurements were collected."}],
+    "targetRecordIds": ["auth-fix"],
+    "userContext": {},
+    "role": "I diagnosed and implemented the permission fix and its regression test.",
+    "requiredConcepts": [["permission", "authorization"], ["regression"], ["403", "unauthorized"]],
+    "forbiddenPhrases": ["50%", "99%", "doubled revenue"],
+    "requiredEvidenceRecordIds": ["auth-fix"]
+  },
+  {
+    "id": "insufficient-personal-evidence",
+    "purpose": "A technology reference does not establish personal project achievements.",
+    "records": [{"id": "reference", "version": 1, "title": "Spring Boot reference", "contentMarkdown": "Reference: Spring Boot can expose REST controllers and serialize objects as JSON. This note contains no personal project, implementation, or outcome."}],
+    "targetRecordIds": ["reference"],
+    "userContext": {"occupation": "Senior developer", "experienceSummary": "Five years of experience"},
+    "role": "This is a reference note. My personal contribution is not recorded.",
+    "requiredConcepts": [["확인 필요", "not recorded", "not provided", "missing", "confirm", "unknown"]],
+    "forbiddenPhrases": ["led the architecture", "delivered the project", "improved performance"],
+    "allowEmpty": true
+  },
+  {
+    "id": "supplement-corrects-role",
+    "purpose": "Keep the original project and use the confirmed correction to scope personal claims.",
+    "records": [
+      {"id": "team", "version": 1, "title": "Twin team delivery", "contentMarkdown": "Project name: Twin\nThe team delivered registry lookup, a dashboard, and tests. The team used Spring Boot and Vue. Individual ownership was not recorded."}
+    ],
+    "supplementRecords": [{"id": "correction", "version": 1, "title": "Confirmed personal contribution", "contentMarkdown": "I implemented the registry backend permission check and regression tests. Another developer implemented the dashboard. I did not implement frontend integration."}],
+    "targetRecordIds": ["team"],
+    "userContext": {"occupation": "Full-stack developer"},
+    "role": "I implemented the backend permission check and regression tests only.",
+    "requiredConcepts": [["registry"], ["permission"], ["regression"]],
+    "forbiddenPhrases": ["I implemented the dashboard", "I integrated Vue", "led the frontend"],
+    "requiredEvidenceRecordIds": ["team", "correction"]
+  },
+  {
+    "id": "multiple-passages",
+    "purpose": "Use both the implementation decision and the later verification from one long record.",
+    "records": [{"id": "long-record", "version": 3, "title": "Invoice permission incident", "contentMarkdown": "I fixed an authorization bug in the invoice endpoint by checking invoice ownership before returning data. I chose a server-side permission check so client-provided identifiers could not bypass authorization. The endpoint previously checked only whether the request was authenticated, which did not establish ownership of the requested invoice.\n\nVerification: I added regression tests for the invoice owner and a different authenticated user. The owner received 200 and the other user received 403. Both tests passed. No numeric business impact or performance improvement was measured."}],
+    "targetRecordIds": ["long-record"],
+    "userContext": {},
+    "role": "I implemented and verified the ownership check.",
+    "requiredConcepts": [["ownership", "owner"], ["regression"], ["403"]],
+    "forbiddenPhrases": ["50%", "99%"],
+    "requiredEvidenceRecordIds": ["long-record"],
+    "minimumEvidencePassages": 2
+  }
+]

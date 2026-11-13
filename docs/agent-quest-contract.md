@@ -45,7 +45,18 @@ Example request:
 }
 ```
 
-NPC generation supplies only the records selected in the session context, plus `answers` containing confirmed role/level and confirmation decisions. The legacy direct endpoint supplies up to 20 recent records. `useCase` is `CAREER` or `LEARNING`. `existingQuests` contains up to 20 active quests for the selected Epic. Profile data may be empty.
+NPC generation supplies only the selected target's records and its supplements, plus `answers` containing confirmed role/level and confirmation decisions. The legacy public direct-generation endpoint now returns 410; result generation requires an NPC session. `useCase` is `CAREER` or `LEARNING`. `existingQuests` contains up to 20 active quests for the selected Epic. Profile data may be empty.
+
+Interpretation receives `records` containing project candidates with normalized string-array `tags`,
+and `supplementRecords` containing explanations attached to the current target. Supplements are not
+offered as competing projects. Initial free text accompanying selected records is treated as a supplement.
+`additional-context` appends a private source record without removing existing evidence. Later supplements
+are scoped to the chosen target and restored only when that target is selected again. `replacement-context`
+is offered only after an explicit source replacement/no-source decision and resets the target and confirmations.
+
+Flyway V9 preserves multiple distinct `(record, version, excerpt)` passages per proposal and copies them
+to the approved quest. Exact repeated passages are deduplicated. Quest responses include both distinct
+`recordIds` and full `evidence` objects, so approved results retain their original supporting quotations.
 
 ## Response
 

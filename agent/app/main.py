@@ -49,6 +49,7 @@ class InterpretRequest(BaseModel):
     useCase: str = "CAREER"
     userContext: dict[str, Any] = Field(default_factory=dict)
     records: list[dict[str, Any]] = Field(default_factory=list)
+    supplementRecords: list[dict[str, Any]] = Field(default_factory=list)
     answers: dict[str, Any] = Field(default_factory=dict)
 
 class CardOption(BaseModel):
@@ -126,7 +127,7 @@ def _generation_instructions(use_case: str, *, select_sources: bool = False) -> 
         "Do not turn a broad confirmed role such as feature development into unsupported design or integration claims. "
         "Write usable project-specific achievement bullets from available facts even when no numerical metric exists. "
         "Mark only individual missing details as [확인 필요]; omit unsupported project sections instead of filling the result with blank templates. "
-        + ("Select at least one relevant supplied sourceId in evidenceSourceIds. The server attaches its exact source text. "
+        + ("Select all distinct supporting passages needed for the concrete claims, including separate implementation and verification passages when applicable, in evidenceSourceIds. At least one is required. The server attaches its exact source text. "
          if select_sources else "Cite at least one supplied record with its exact recordId and recordVersion and a short verbatim excerpt. ") +
         'If no relevant evidence exists, return {"proposals": []}.'
     )
@@ -186,6 +187,9 @@ def project_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for record in records:
         tags = record.get("tags", [])
+        # Accept old Core payloads while newer Core always supplies a string array.
+        if isinstance(tags, dict):
+            tags = tags.get("value", [])
         if isinstance(tags, str):
             try:
                 tags = json.loads(tags)
@@ -223,11 +227,14 @@ async def interpret(req: InterpretRequest, x_internal_api_key: str | None = Head
             return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="서로 다른 경험이 섞이지 않도록 작성 대상을 먼저 확인할게요.", cards=project_cards).model_dump()
         selected_ids = set(selection.split(","))
         req = req.model_copy(update={"records": [record for record in req.records if str(record["id"]) in selected_ids]})
-    record = req.records[0] if req.records else None
+    seen = {str(record["id"]) for record in req.records}
+    req = req.model_copy(update={"records": req.records + [record for record in req.supplementRecords if str(record["id"]) not in seen]})
     evidence = [Evidence(recordId=str(item["id"]), recordVersion=int(item["version"]), excerpt=str(item.get("contentMarkdown", ""))[:240]) for item in req.records if str(item.get("contentMarkdown", "")).strip()]
 
-    if req.answers.get("source-check") in ("replace", "none") or req.answers.get("facts-check") == "edit":
-        return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="근거를 보완해 주세요. 새로 알려주신 내용도 원본 기록으로 남깁니다.", cards=project_cards + [DynamicCard(type="TEXT", id="additional-context", title="사용할 경험이나 학습 목표를 다시 적어주세요.", allowFreeText=True)]).model_dump()
+    if req.answers.get("source-check") in ("replace", "none"):
+        return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="새 경험을 입력하면 이번 대화의 기존 근거를 새 기록으로 교체합니다. 원본 보관함은 유지됩니다.", cards=project_cards + [DynamicCard(type="TEXT", id="replacement-context", title="대신 사용할 경험이나 학습 목표를 적어주세요.", allowFreeText=True)]).model_dump()
+    if req.answers.get("source-check") == "supplement" or req.answers.get("facts-check") == "edit":
+        return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="선택한 원본 기록을 유지하면서 빠진 사실이나 정정할 내용을 함께 확인할게요.", cards=project_cards + [DynamicCard(type="TEXT", id="additional-context", title="추가하거나 정정할 내용을 적어주세요. 기존 기록은 유지됩니다.", allowFreeText=True)]).model_dump()
     if use_case == "LEARNING":
         message = "좋아요. 이 학습 목표를 실행 가능한 단계로 바꿔볼게요. 현재 수준을 알려주세요."
         cards = [DynamicCard(type="CHOICE", id="learning-level", title="현재 주제 수준은 어느 정도인가요?", options=[
@@ -254,7 +261,7 @@ async def interpret(req: InterpretRequest, x_internal_api_key: str | None = Head
         facts = "\n\n".join(f"## {item['title']}\n{str(item.get('contentMarkdown', ''))[:4800]}" + ("\n[이후 내용은 원본 보기에서 확인해 주세요]" if len(str(item.get('contentMarkdown', ''))) > 4800 else "") for item in req.records)
         return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="선택한 묶음의 모든 기록을 확인해 주세요.", cards=project_cards + [DynamicCard(type="CONFIRMATION", id="facts-check", title="이 내용으로 결과물을 만들까요?", value=facts + "\n\n역할 / 현재 수준: " + str(req.answers[answered]), sourceRefs=evidence, options=[CardOption(id="confirm", label="맞아요"), CardOption(id="edit", label="내용을 수정할게요")])]).model_dump()
     if evidence:
-        cards.append(DynamicCard(type="EVIDENCE", id="source-check", title="선택한 모든 원본 기록을 근거로 사용해도 될까요?", value="\n\n".join(f"{item['title']}\n{str(item.get('contentMarkdown', ''))[:240]}" for item in req.records), sourceRefs=evidence, options=[CardOption(id="confirm", label="이 근거를 사용할게요"), CardOption(id="replace", label="다른 기록을 찾을게요"), CardOption(id="none", label="근거 없음")]))
+        cards.append(DynamicCard(type="EVIDENCE", id="source-check", title="선택한 모든 원본 기록을 근거로 사용해도 될까요?", value="\n\n".join(f"{item['title']}\n{str(item.get('contentMarkdown', ''))[:240]}" for item in req.records), sourceRefs=evidence, options=[CardOption(id="confirm", label="이 근거를 사용할게요"), CardOption(id="supplement", label="내용을 덧붙일게요"), CardOption(id="replace", label="새 경험으로 교체할게요"), CardOption(id="none", label="근거 없음")]))
     return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message=message, cards=project_cards + cards).model_dump()
 
 @app.post("/internal/v1/quest-proposals/generate")

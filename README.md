@@ -20,7 +20,7 @@ Spring Boot (Java 17) is the public API and PostgreSQL is the source of truth. F
 ## Implemented MVP behavior
 
 - Create, list, view, update, and soft-delete Markdown records; read the active Epic.
-- NPC sessions generate from the session's records and confirmed answers, together with profile, Epic, and existing quest context. The legacy direct generation endpoint still uses recent records.
+- NPC sessions generate from the chosen project's records, supplements and confirmed answers, together with profile, Epic, and existing quest context. Direct generation without an NPC session returns 410.
 - Review and edit the generated Markdown result, objective, steps, completion criteria, rationale, and source evidence before approval; rejection creates no Quest.
 - On acceptance, persist the edited title, objective, steps, completion criteria, evidence links, and creation event. The quest board displays the structured plan.
 
@@ -57,18 +57,21 @@ Example flow with curl (PowerShell users can run these in Git Bash, WSL, or use 
 ```sh
 curl -X POST http://localhost:8080/api/v1/records -H 'Content-Type: application/json' \
   -d '{"title":"Spring authorization notes","contentMarkdown":"Reviewed access control and fixed an authorization bug.","tags":["learning"]}'
-curl http://localhost:8080/api/v1/epics/active
-# Use the returned epic id:
-curl -X POST http://localhost:8080/api/v1/agent/quest-proposals -H 'Content-Type: application/json' \
-  -d '{"epicId":"<epic-id>"}'
-curl http://localhost:8080/api/v1/quest-proposals
-# Use the returned proposal id:
-curl -X POST http://localhost:8080/api/v1/quest-proposals/<proposal-id>/decisions \
-  -H 'Content-Type: application/json' -d '{"action":"ACCEPT"}'
+# Use the returned record id, then the returned sessionId in subsequent calls:
+curl -X POST http://localhost:8080/api/v1/agent-sessions -H 'Content-Type: application/json' \
+  -d '{"useCase":"CAREER","recordIds":["<record-id>"]}'
+curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
+  -H 'Content-Type: application/json' -d '{"cardId":"role","value":"debug"}'
+curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
+  -H 'Content-Type: application/json' -d '{"cardId":"facts-check","value":"confirm"}'
+curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
+  -H 'Content-Type: application/json' -d '{"cardId":"source-check","value":"confirm"}'
+# Review the generated result before approving it:
+curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/approve
 curl http://localhost:8080/api/v1/quests
 ```
 
-`POST /api/v1/records` → Agent proposal generation → `PENDING` proposal storage → user review → `ACCEPT`, `ACCEPT_EDITED`, or `REJECT`. Acceptance stores the quest, evidence links, reviewed result body, and creation event in one database transaction. Spring validates evidence ownership, supplied record scope, version, and verbatim excerpts before storing evidence. Approval rejects changed or deleted source records.
+`POST /api/v1/records` → NPC session → target/fact/evidence confirmation → `PENDING` proposal → user review → approve or reject. Acceptance stores the quest, all distinct evidence passages, reviewed result body, and creation event in one database transaction. Spring validates evidence ownership, supplied record scope, version, and verbatim excerpts before storing evidence. Approval rejects changed or deleted source records. Flyway V9 retains existing evidence and backfills legacy approved-result excerpts. See [result quality evaluation](docs/result-quality-evaluation.md) for synthetic regression cases and opt-in model evaluation.
 
 ## Stop and preserve data
 

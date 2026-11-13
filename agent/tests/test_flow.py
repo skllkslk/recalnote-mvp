@@ -75,7 +75,22 @@ class AgentFlowTest(unittest.TestCase):
         for answers in ({"source-check": "none"}, {"source-check": "replace"}, {"facts-check": "edit"}):
             with self.subTest(answers=answers):
                 result = self.interpret(answers)
-                self.assertEqual(result["cards"][0]["id"], "additional-context")
+                self.assertEqual(result["cards"][0]["id"], "additional-context" if answers.get("facts-check") == "edit" else "replacement-context")
+
+    def test_database_tag_objects_group_the_same_as_normalized_arrays(self):
+        from app.main import project_groups
+        records = [{**self.record, "tags": {"type": "jsonb", "value": '["project:Twin"]'}}, {**self.record, "id": "second", "tags": ["project:Twin"]}]
+        self.assertEqual(len(project_groups(records)), 1)
+
+    def test_supplements_do_not_become_project_choices_or_disappear_after_selection(self):
+        records = [self.record, {**self.record, "id": "other", "title": "Other project"}]
+        supplement = {**self.record, "id": "extra", "title": "Correction", "contentMarkdown": "I implemented only the backend."}
+        req = InterpretRequest(sessionId="session", records=records, supplementRecords=[supplement])
+        choices = asyncio.run(interpret(req, "test-key"))["cards"][0]
+        self.assertNotIn("extra", [option["id"] for option in choices["options"]])
+        facts = asyncio.run(interpret(req.model_copy(update={"answers": {"project-selection": "record-1", "role": "debug"}}), "test-key"))["cards"][-1]
+        self.assertEqual([source["recordId"] for source in facts["sourceRefs"]], ["record-1", "extra"])
+        self.assertIn(supplement["contentMarkdown"], facts["value"])
 
     def test_both_modes_generate_result_body_with_source(self):
         for use_case in ("CAREER", "LEARNING"):
