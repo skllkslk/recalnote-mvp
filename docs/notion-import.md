@@ -11,6 +11,13 @@ The Markdown body, exported property text, and links are kept; only a UTF-8 BOM 
 The record stores the source path and, when present, the Notion page ID. The detail drawer shows its original path.
 Imported records can be searched, edited, and selected as evidence through the existing app.
 
+After importing, choose **이 기록으로 결과물 만들기** in **내 경험**. Complete the Epic selection if needed,
+then select up to 20 saved records on the NPC screen. New text is optional when records are selected.
+The NPC session uses the original record IDs without creating copies; confirm the facts and evidence,
+review the generated Markdown, and approve it to save the result.
+This route requires both the backend and frontend updates: `POST /api/v1/agent-sessions` accepts
+optional `recordIds` alongside optional `contentMarkdown`, and requires at least one source.
+
 CSV files are database indexes and are not imported as extra records. CSV-only exports are rejected with instructions to export Markdown.
 Images, PDFs, and other attachments are not stored or fetched. Their relative links remain in the source text and will not resolve to uploaded assets.
 Notion internal page links also remain as exported text. This feature does not synchronize with the Notion API or render a Notion workspace.

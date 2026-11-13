@@ -67,14 +67,28 @@ public class ApiController {
 
     @PostMapping("/agent-sessions") @Transactional public Map<String,Object> createAgentSession(@RequestBody Map<String,Object> body) {
         String capture=Objects.toString(body.getOrDefault("contentMarkdown",""),"").trim();
-        if(capture.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"contentMarkdown is required");
+        List<String> recordIds=new ArrayList<>();
+        Object suppliedIds=body.getOrDefault("recordIds",List.of());
+        if(!(suppliedIds instanceof List<?> ids) || ids.size()>20)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Select at most 20 records");
+        for(Object value:ids) {
+            UUID recordId;
+            try { recordId=UUID.fromString(Objects.toString(value,"")); }
+            catch(IllegalArgumentException ex) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid record ID"); }
+            record(recordId); // Validate ownership and exclude deleted records before creating a session.
+            if(!recordIds.contains(recordId.toString())) recordIds.add(recordId.toString());
+        }
+        if(capture.isBlank() && recordIds.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Select records or enter contentMarkdown");
         String selectedUseCase=normalizedUseCase(body.getOrDefault("useCase",useCase()));
         Map<String,Object> activeEpic=activeEpic(selectedUseCase);
-        UUID recordId=UUID.randomUUID();
-        String title=Objects.toString(body.getOrDefault("title", selectedUseCase.equals("LEARNING") ? "학습 재료" : "경험 기록"),"").trim();
-        db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,?::jsonb)",recordId,userId(),title.isBlank()?"경험 기록":title,capture,json(body.getOrDefault("tags",List.of())));
+        if(!capture.isBlank()) {
+            UUID recordId=UUID.randomUUID();
+            String title=Objects.toString(body.getOrDefault("title", selectedUseCase.equals("LEARNING") ? "학습 재료" : "경험 기록"),"").trim();
+            db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,?::jsonb)",recordId,userId(),title.isBlank()?"경험 기록":title,capture,json(body.getOrDefault("tags",List.of())));
+            recordIds.add(recordId.toString());
+        }
         UUID sessionId=UUID.randomUUID();
-        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",List.of(recordId.toString())); context.put("answers",new LinkedHashMap<>());
+        Map<String,Object> context=new LinkedHashMap<>(); context.put("recordIds",recordIds); context.put("answers",new LinkedHashMap<>());
         db.update("INSERT INTO agent_session(id,user_id,epic_id,use_case,state,context_json) VALUES (?,?,?,?,'INTERPRETING',?::jsonb)",sessionId,userId(),activeEpic.get("id"),selectedUseCase,json(context));
         Map<String,Object> interpreted=interpretSession(sessionId,selectedUseCase,activeEpic,context);
         return saveSessionResponse(sessionId,interpreted);
