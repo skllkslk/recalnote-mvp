@@ -103,6 +103,29 @@ class AgentFlowTest(unittest.TestCase):
         prompt = runner.await_args.args[1].split("\nSelect relevant sourceId", 1)[0]
         self.assertEqual(json.loads(prompt)["records"][-1]["excerpt"], evidence[0]["excerpt"])
 
+    def test_openai_can_cite_results_at_end_of_long_record(self):
+        import json
+        from app.main import SourceSelectionOutput
+        original = "Background " * 700 + "RESULT: regression tests passed after fixing authorization."
+        record = {**self.record, "contentMarkdown": original}
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
+        proposal = valid["proposals"][0]
+        proposal.pop("evidence")
+
+        async def select_result(agent, prompt):
+            sources = json.loads(prompt.split("\nSelect relevant sourceId", 1)[0])["records"]
+            self.assertLessEqual(sum(len(source["excerpt"]) for source in sources), 4800)
+            selected = next(source for source in sources if "regression tests passed" in source["excerpt"])
+            return types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[{
+                **proposal, "evidenceSourceIds": [selected["sourceId"]],
+            }]))
+
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", side_effect=select_result):
+            result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[record]), "test-key"))
+        excerpt = result["proposals"][0]["evidence"][0]["excerpt"]
+        self.assertIn("regression tests passed", excerpt)
+        self.assertIn(excerpt, original)
+
     def test_openai_never_substitutes_a_record_for_an_unknown_source(self):
         from app.main import SourceSelectionOutput
         valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
