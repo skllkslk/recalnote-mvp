@@ -160,6 +160,7 @@ export default function App() {
   const [studioRecordIds, setStudioRecordIds] = useState<string[]>([])
   const [careerFields, setCareerFields] = useState<CareerFields>(emptyCareerFields)
   const [profile, setProfile] = useState<PlayerProfile>(emptyPlayerProfile)
+  const [profileDraft, setProfileDraft] = useState<PlayerProfile>(emptyPlayerProfile)
   const [profileInterests, setProfileInterests] = useState("")
   const [draft, setDraft] = useState("")
   const [learningTitle, setLearningTitle] = useState("")
@@ -186,7 +187,6 @@ export default function App() {
       setQuests(questRows.filter(row => row.epicId === activeEpic.id))
       setProfile(playerProfile)
       if (!playerProfile.onboardingCompleted) setPage("profile")
-      setProfileInterests(playerProfile.interests.join(", "))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "데이터를 불러오지 못했습니다.")
     } finally { setLoading(false) }
@@ -206,6 +206,11 @@ export default function App() {
       if (session.sessionId) setAgentSession(session as AgentSession)
     }).catch(() => { setLoginError("서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요."); setAuthenticated(false) })
   }, [])
+
+  useEffect(() => {
+    setProfileDraft(profile)
+    setProfileInterests(profile.interests.join(", "))
+  }, [page, profile])
 
   async function logout() {
     try {
@@ -336,7 +341,7 @@ export default function App() {
   async function savePlayerProfile(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("")
     try {
-      const saved = await request<PlayerProfile>("/users/me/profile", { method: "PUT", body: JSON.stringify({ ...profile, interests: profileInterests.split(",").map(item => item.trim()).filter(Boolean) }) })
+      const saved = await request<PlayerProfile>("/users/me/profile", { method: "PUT", body: JSON.stringify({ ...profileDraft, interests: profileInterests.split(",").map(item => item.trim()).filter(Boolean) }) })
       setProfile(saved); setProfileInterests(saved.interests.join(", ")); setNotice("Epic을 선택했습니다. 편한 방식으로 내용을 입력해 주세요."); setCaptureFields({}); setAgentCapture(""); setAgentTitle(""); setAgentFreeText({}); setAgentSession(null); setPage("agent"); await refresh()
     } catch (cause) { setError(cause instanceof Error ? cause.message : "프로필을 저장하지 못했습니다.") }
     finally { setBusy(false) }
@@ -473,10 +478,10 @@ export default function App() {
         <div className="page-title"><div><p className="eyebrow">PLAYER PROFILE</p><h1>첫 모험의 Epic을 선택하세요</h1><p>프로필은 경력기술서 작성과 학습 제안을 개인화하는 데 사용됩니다.</p></div></div>
         <div className="profile-layout">
           <section className="profile-character-card"><span className="profile-level">LV. {String(completedCareerStages + 1).padStart(2, "0")}</span><div className="profile-character-scene"><PlayerSprite /><span className="profile-class">MEMORY ALCHEMIST</span></div><div className="profile-character-stats"><span><small>경험 기록</small><b>{experienceRecords.length}</b></span><span><small>학습 노트</small><b>{learningNotes.length}</b></span><span><small>작성 단계</small><b>{quests.length}</b></span></div><div className="profile-xp"><div><small>CAREER QUEST</small><b>{completedCareerStages}/{careerStages.length} 단계</b></div><i><b style={{ width: `${completedCareerStages / careerStages.length * 100}%` }} /></i></div></section>
-          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profile.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="eyebrow">01 · EPIC 선택</p><p className="profile-form-intro">먼저 어떤 결과물을 만들지 선택해 주세요. 선택에 따라 NPC의 질문과 제안이 달라집니다.</p>
-            <div className="use-case-picker"><button type="button" className={`use-case-option ${profile.useCase === "CAREER" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "CAREER" })}><strong>경력기술서 초안</strong><small>경험을 성과 중심의 문장과 작성 단계로 정리</small></button><button type="button" className={`use-case-option ${profile.useCase === "LEARNING" ? "selected" : ""}`} onClick={() => setProfile({ ...profile, useCase: "LEARNING" })}><strong>학습 로드맵</strong><small>경험과 목표를 다음 학습 단계로 연결</small></button></div>
-            <label className="field-label">표시 이름<input value={profile.displayName} onChange={event => setProfile({ ...profile, displayName: event.target.value })} placeholder="예: 김리콜" /></label>
-            {profile.useCase === "CAREER" ? <><label className="field-label">현재 역할<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 백엔드 개발자" /></label><label className="field-label">목표 직무 또는 작성 목적<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label><label className="field-label">경력 요약<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label><label className="field-label">관심 기술 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: Spring Boot, 접근성, 데이터" /></label></> : <><label className="field-label">현재 학습 수준<input value={profile.occupation} onChange={event => setProfile({ ...profile, occupation: event.target.value })} placeholder="예: 기본 개념을 아는 초급" /></label><label className="field-label">학습 목표<input value={profile.currentGoal} onChange={event => setProfile({ ...profile, currentGoal: event.target.value })} placeholder="예: 실제 프로젝트에 적용하기" /></label><label className="field-label">배우고 싶은 주제<textarea rows={4} value={profile.experienceSummary} onChange={event => setProfile({ ...profile, experienceSummary: event.target.value })} placeholder="어떤 주제를 어떤 이유로 배우고 싶은지 적어보세요." /></label><label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 보안, 테스트, 시스템 설계" /></label></>}
+          <form className="profile-form" onSubmit={savePlayerProfile}><div className="profile-form-heading"><div><p className="eyebrow">PLAYER PROFILE</p><h2>{profileDraft.displayName || "모험가"}</h2></div><span className="profile-online">PROFILE</span></div><p className="eyebrow">01 · EPIC 선택</p><p className="profile-form-intro">먼저 어떤 결과물을 만들지 선택해 주세요. 선택에 따라 NPC의 질문과 제안이 달라집니다.</p>
+            <div className="use-case-picker"><button type="button" className={`use-case-option ${profileDraft.useCase === "CAREER" ? "selected" : ""}`} onClick={() => setProfileDraft({ ...profileDraft, useCase: "CAREER" })}><strong>경력기술서 초안</strong><small>경험을 성과 중심의 문장과 작성 단계로 정리</small></button><button type="button" className={`use-case-option ${profileDraft.useCase === "LEARNING" ? "selected" : ""}`} onClick={() => setProfileDraft({ ...profileDraft, useCase: "LEARNING" })}><strong>학습 로드맵</strong><small>경험과 목표를 다음 학습 단계로 연결</small></button></div>
+            <label className="field-label">표시 이름<input value={profileDraft.displayName} onChange={event => setProfileDraft({ ...profileDraft, displayName: event.target.value })} placeholder="예: 김리콜" /></label>
+            {profileDraft.useCase === "CAREER" ? <><label className="field-label">현재 역할<input value={profileDraft.occupation} onChange={event => setProfileDraft({ ...profileDraft, occupation: event.target.value })} placeholder="예: 백엔드 개발자" /></label><label className="field-label">목표 직무 또는 작성 목적<input value={profileDraft.currentGoal} onChange={event => setProfileDraft({ ...profileDraft, currentGoal: event.target.value })} placeholder="예: 새로운 팀으로 이직" /></label><label className="field-label">경력 요약<textarea rows={4} value={profileDraft.experienceSummary} onChange={event => setProfileDraft({ ...profileDraft, experienceSummary: event.target.value })} placeholder="연차, 주요 분야, 해온 일을 간단히 적어보세요." /></label><label className="field-label">관심 기술 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: Spring Boot, 접근성, 데이터" /></label></> : <><label className="field-label">현재 학습 수준<input value={profileDraft.occupation} onChange={event => setProfileDraft({ ...profileDraft, occupation: event.target.value })} placeholder="예: 기본 개념을 아는 초급" /></label><label className="field-label">학습 목표<input value={profileDraft.currentGoal} onChange={event => setProfileDraft({ ...profileDraft, currentGoal: event.target.value })} placeholder="예: 실제 프로젝트에 적용하기" /></label><label className="field-label">배우고 싶은 주제<textarea rows={4} value={profileDraft.experienceSummary} onChange={event => setProfileDraft({ ...profileDraft, experienceSummary: event.target.value })} placeholder="어떤 주제를 어떤 이유로 배우고 싶은지 적어보세요." /></label><label className="field-label">관심 분야 <span className="label-hint">쉼표로 구분</span><input value={profileInterests} onChange={event => setProfileInterests(event.target.value)} placeholder="예: 보안, 테스트, 시스템 설계" /></label></>}
             <p className="profile-ai-note">이 정보는 AI 제안의 맥락으로만 사용됩니다. 경력 성과는 저장된 원본 기록으로 확인합니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={() => setPage("home")}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "저장 중…" : "저장하고 입력 시작하기 →"}</button></div>
           </form>
         </div>
