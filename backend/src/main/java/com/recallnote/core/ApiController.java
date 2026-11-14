@@ -32,7 +32,7 @@ public class ApiController {
     @PostMapping("/records") public ResponseEntity<Map<String,Object>> create(@RequestBody Map<String,Object> body) {
         UUID id=UUID.randomUUID();
         db.update("INSERT INTO record(id,user_id,title,content_markdown,tags_json) VALUES (?,?,?,?,?::jsonb)",
-                id,userId(), required(body,"title"), required(body,"contentMarkdown"), json(body.getOrDefault("tags",List.of())));
+                id,userId(), required(body,"title"), required(body,"contentMarkdown"), json(RecordTracks.withTags(stringList(body.get("tags")),required(body,"title"),required(body,"contentMarkdown"),"")));
         return ResponseEntity.status(201).body(record(id));
     }
     @GetMapping("/records") public List<Map<String,Object>> records() {
@@ -40,7 +40,7 @@ public class ApiController {
     }
     @GetMapping("/records/{id}") public Map<String,Object> get(@PathVariable UUID id) { return record(id); }
     @PutMapping("/records/{id}") public Map<String,Object> update(@PathVariable UUID id,@RequestBody Map<String,Object> b) {
-        if(db.update("UPDATE record SET title=?,content_markdown=?,tags_json=?::jsonb,version=version+1,updated_at=now() WHERE id=? AND user_id=? AND deleted_at IS NULL", required(b,"title"),required(b,"contentMarkdown"),json(b.getOrDefault("tags",List.of())),id,userId())==0) throw new NotFoundException();
+        if(db.update("UPDATE record SET title=?,content_markdown=?,tags_json=?::jsonb,version=version+1,updated_at=now() WHERE id=? AND user_id=? AND deleted_at IS NULL", required(b,"title"),required(b,"contentMarkdown"),json(RecordTracks.withTags(stringList(b.get("tags")),required(b,"title"),required(b,"contentMarkdown"),"")),id,userId())==0) throw new NotFoundException();
         return record(id);
     }
     @DeleteMapping("/records/{id}") public ResponseEntity<Void> delete(@PathVariable UUID id) {
@@ -364,6 +364,7 @@ public class ApiController {
         Map<String,Object> result=new LinkedHashMap<>(); result.put("sessionId",row.get("id")); result.put("useCase",row.get("useCase")); result.put("state",row.get("state"));
         Map<String,Object> npc=new LinkedHashMap<>(); npc.put("name","리콜 가이드"); npc.put("message",row.get("message")); result.put("npc",npc);
         result.put("cards",parseJsonValue(row.get("cards"),List.of()));
+        result.put("selectedRecordIds",parseObject(row.get("context")).getOrDefault("recordIds",List.of()));
         if(row.get("proposalId")!=null) result.put("proposalId",row.get("proposalId"));
         return result;
     }
@@ -408,6 +409,7 @@ public class ApiController {
     private static Map<String,Object> normalizeRecord(Map<String,Object> row) {
         Map<String,Object> normalized=new LinkedHashMap<>(row);
         Object tags=row.get("tags");
+        normalized.put("tracks",RecordTracks.classify(Objects.toString(row.get("title"),""), Objects.toString(row.get("contentMarkdown"),""), Objects.toString(row.get("sourcePath"),"")));
         normalized.put("tags",tags instanceof Collection<?> ? stringList(tags) : stringList(tags==null?"[]":tags.toString()));
         return normalized;
     }

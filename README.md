@@ -99,6 +99,8 @@ Flyway migrations live in `backend/src/main/resources/db/migration`. Hibernate s
 
 ## Developer documentation
 
+- [Multi-source generation and recommended tracks](docs/multi-source-tracks.md) describes source coverage, automatic topic classification, deployment and acceptance checks.
+
 The legacy Python flow harness below predates session authentication and no longer authenticates. Use `mvn test` and the opt-in PostgreSQL checks in [social-login.md](docs/social-login.md) for this release. The Compose environment remains available as an isolated database/agent setup:
 
 ```powershell

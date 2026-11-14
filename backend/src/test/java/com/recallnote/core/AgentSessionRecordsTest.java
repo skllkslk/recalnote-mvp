@@ -185,6 +185,31 @@ class AgentSessionRecordsTest {
         } finally { server.stop(0); }
     }
 
+    @Test void selectingAllProjectsPreservesEveryCandidateAndExposesCoverageOnResume() throws Exception {
+        UUID session=UUID.randomUUID(), first=UUID.randomUUID(), second=UUID.randomUUID();
+        var mapper=new ObjectMapper();
+        var ids=List.of(first.toString(),second.toString());
+        String all=String.join(",",ids);
+        String context=mapper.writeValueAsString(Map.of("recordIds",ids,"candidateRecordIds",ids,"answers",Map.of()));
+        String cards=mapper.writeValueAsString(List.of(Map.of("id","project-selection","options",List.of(Map.of("id",all)))));
+        when(db.queryForList(contains("FOR UPDATE"),eq(session),eq("owner"))).thenReturn(List.of(Map.of("id",session)));
+        when(db.queryForMap(contains("FROM agent_session"),eq(session),eq("owner")))
+            .thenAnswer(call -> new HashMap<>(Map.of("id",session,"state","NEEDS_INPUT","useCase","CAREER","context",context,"cards",cards)));
+        when(db.queryForList(contains("FROM epic WHERE"),eq("owner"),eq("CAREER")))
+            .thenReturn(List.of(Map.of("id",UUID.randomUUID(),"title","Career")));
+        when(db.queryForMap(contains("FROM record WHERE"),any(UUID.class),eq("owner")))
+            .thenAnswer(call -> Map.of("id",call.getArgument(1),"title","Record","contentMarkdown","Content","version",1));
+        try(var agent=new TestAgent()) {
+            var api=new ApiController(db,agent.url(),"key","unused");
+            var response=api.agentTurn(session,Map.of("cardId","project-selection","value",all));
+            var saved=org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(db).update(startsWith("UPDATE agent_session SET state=?,context_json="),eq("NEEDS_INPUT"),saved.capture(),anyString(),eq(session),eq("owner"));
+            assertEquals(ids, mapper.convertValue(mapper.readTree(saved.getValue()).get("recordIds"), List.class));
+            assertEquals(ids,response.get("selectedRecordIds"));
+            assertEquals(ids,api.getAgentSession(session).get("selectedRecordIds"));
+        }
+    }
+
     @Test void switchingTargetsExcludesOtherTargetsSupplementsAndRestoresOwn() throws Exception {
         UUID session=UUID.randomUUID(), first=UUID.randomUUID(), second=UUID.randomUUID(), extra=UUID.randomUUID();
         var mapper=new ObjectMapper();

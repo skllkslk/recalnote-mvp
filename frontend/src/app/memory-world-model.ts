@@ -49,7 +49,7 @@ export function makeBusinessProjects(records: WorldRecord[], quests: WorldQuest[
   records.forEach(record => {
     const projectTag = record.tags?.find(tag => tag.toLocaleLowerCase().startsWith("project:"))
     const taggedName = projectTag?.slice(projectTag.indexOf(":") + 1).trim()
-    const name = record.projectName?.trim() || taggedName || record.tags?.[0]?.trim() || "\uBBF8\uBD84\uB958 \uAE30\uB85D"
+    const name = record.projectName?.trim() || taggedName || record.tags?.find(tag => !/^(source|track|track-version):/i.test(tag))?.trim() || "\uBBF8\uBD84\uB958 \uAE30\uB85D"
     const projectId = record.projectId || `project:${slug(name)}`
     const current = grouped.get(projectId) ?? { name, recordIds: [] }
     current.recordIds.push(record.id)

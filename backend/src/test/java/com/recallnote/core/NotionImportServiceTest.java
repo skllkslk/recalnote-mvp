@@ -29,11 +29,28 @@ class NotionImportServiceTest {
         assertEquals(18, arguments.getAllValues().get(1).length);
         for (int i = 0; i < first.length; i += 9) {
             assertEquals("owner-a", first[i + 1]);
-            assertEquals("[\"source:notion\",\"project:프로젝트\"]", first[i + 4]);
+            var tags = new ObjectMapper().readTree(first[i + 4].toString());
+            assertEquals("source:notion", tags.get(0).asText());
+            assertEquals("project:프로젝트", tags.get(1).asText());
+            assertTrue(first[i + 4].toString().contains("track:기획·협업"));
             assertEquals("notion", first[i + 5]);
             assertTrue(first[i + 6].toString().endsWith(".md"));
             assertEquals(64, first[i + 8].toString().length());
         }
+    }
+
+    @Test void differentPagesPersistTheirOwnTracksWithoutInventingProjects() throws Exception {
+        var entries = new LinkedHashMap<String,byte[]>();
+        entries.put("rag.md", NotionZipReaderTest.text("# RAG\nEmbedding retrieval"));
+        entries.put("ui.md", NotionZipReaderTest.text("# React\nCSS 화면"));
+        when(db.update(anyString(), any(Object[].class))).thenReturn(2);
+        service.importArchive("owner", NotionZipReaderTest.zip(entries), "");
+        var arguments = ArgumentCaptor.forClass(Object[].class);
+        verify(db).update(anyString(), arguments.capture());
+        String allTags = arguments.getValue()[4] + " " + arguments.getValue()[13];
+        assertTrue(allTags.contains("track:AI·RAG"));
+        assertTrue(allTags.contains("track:프론트엔드·UI"));
+        assertFalse(allTags.contains("project:"));
     }
 
     @Test void validatesWholeArchiveBeforeWritingAnyPage() throws Exception {

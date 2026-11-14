@@ -28,12 +28,24 @@ class AgentFlowTest(unittest.TestCase):
         result = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records), "test-key"))
         card = result["cards"][0]
         self.assertEqual(card["id"], "project-selection")
-        self.assertEqual([option["id"] for option in card["options"]], ["record-1", "other"])
+        self.assertEqual([option["id"] for option in card["options"]], ["record-1,other", "record-1", "other"])
         selected = asyncio.run(interpret(InterpretRequest(sessionId="session", records=records, answers={"project-selection": "record-1", "role": "debug"}), "test-key"))
         facts = selected["cards"][-1]
         self.assertIn(self.record["contentMarkdown"], facts["value"])
         self.assertNotIn("Vue API integration", facts["value"])
         self.assertEqual([source["recordId"] for source in facts["sourceRefs"]], ["record-1"])
+
+    def test_all_records_remain_available_for_both_use_cases(self):
+        records = [self.record, {**self.record, "id": "second", "title": "검증 기록", "contentMarkdown": "별도의 검증 결과를 확인했다."}]
+        for use_case, answer in (("CAREER", "role"), ("LEARNING", "learning-level")):
+            with self.subTest(use_case=use_case):
+                result = asyncio.run(interpret(InterpretRequest(sessionId="session", useCase=use_case, records=records,
+                    answers={"project-selection": "record-1,second", answer: "직접 수행", "facts-check": "confirm"}), "test-key"))
+                self.assertEqual([source["recordId"] for source in result["cards"][-1]["sourceRefs"]], ["record-1", "second"])
+                generated = asyncio.run(generate(GenerateRequest(runId="multi", useCase=use_case, userContext={}, epic={}, records=records), "test-key"))["proposals"][0]
+                self.assertEqual({source["recordId"] for source in generated["evidence"]}, {"record-1", "second"})
+                for record in records:
+                    self.assertIn(record["contentMarkdown"], generated["resultMarkdown"])
 
     def test_explicit_project_groups_confirm_every_record_and_allow_reselection(self):
         records = [{**self.record, "tags": '["project:Twin"]'}, {**self.record, "id": "second", "title": "Tests", "contentMarkdown": "Regression results", "tags": ["project:Twin"]}]
@@ -144,14 +156,62 @@ class AgentFlowTest(unittest.TestCase):
         valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))
         proposal = valid["proposals"][0]
         proposal.pop("evidence")
-        proposal["evidenceSourceIds"] = ["source-2-2"]
+        proposal["evidenceSourceIds"] = ["source-1-1", "source-2-2"]
         runner = AsyncMock(return_value=types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[proposal])))
         with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
             result = asyncio.run(generate(GenerateRequest(runId="run", userContext={}, epic={}, records=[self.record, selected]), "test-key"))
         evidence = result["proposals"][0]["evidence"]
-        self.assertEqual(evidence, [{"recordId": "record-2", "recordVersion": 7, "excerpt": original[240:]}])
+        self.assertEqual(evidence, [
+            {"recordId": "record-1", "recordVersion": 1, "excerpt": self.record["contentMarkdown"]},
+            {"recordId": "record-2", "recordVersion": 7, "excerpt": original[240:]},
+        ])
         prompt = runner.await_args.args[1].split("\nSelect relevant sourceId", 1)[0]
-        self.assertEqual(json.loads(prompt)["records"][-1]["excerpt"], evidence[0]["excerpt"])
+        self.assertEqual(json.loads(prompt)["records"][-1]["excerpt"], evidence[1]["excerpt"])
+
+    def test_openai_retries_silently_dropped_record_then_preserves_both(self):
+        from app.main import SourceSelectionOutput
+        second = {**self.record, "id": "second", "title": "검증 결과", "contentMarkdown": "회귀 검증에 성공했다."}
+        valid = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))["proposals"][0]
+        valid.pop("evidence")
+        first = {**valid, "evidenceSourceIds": ["source-1-1"]}
+        fixed = {**valid, "evidenceSourceIds": ["source-1-1", "source-2-1"]}
+        runner = AsyncMock(side_effect=[types.SimpleNamespace(final_output=SourceSelectionOutput(proposals=[item])) for item in [first, fixed]])
+        with patch.dict(os.environ, {"AGENT_MODE": "openai", "OPENAI_API_KEY": "test-key"}), patch("agents.Runner.run", runner):
+            result = asyncio.run(generate(GenerateRequest(runId="multi", userContext={}, epic={}, records=[self.record, second]), "test-key"))
+        self.assertEqual(runner.await_count, 2)
+        self.assertIn("unaccounted_records", runner.await_args.args[1])
+        self.assertEqual({ev["recordId"] for ev in result["proposals"][0]["evidence"]}, {"record-1", "second"})
+
+    def test_gemini_retries_a_missing_record_within_the_same_coverage_rules(self):
+        import json
+        proposal = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))["proposals"][0]
+        second = {**self.record, "id": "second", "title": "추가 검증", "contentMarkdown": "테스트로 결과를 확인했다."}
+        corrected = {**proposal, "evidence": proposal["evidence"] + [{"recordId": "second", "recordVersion": 1, "excerpt": second["contentMarkdown"]}]}
+        calls = []
+        outputs = iter([proposal, corrected])
+        def generate_content(**kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(text=json.dumps({"proposals": [next(outputs)]}))
+        fake_types = types.SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs)
+        fake_genai = types.SimpleNamespace(Client=lambda **kwargs: types.SimpleNamespace(models=types.SimpleNamespace(generate_content=generate_content)), types=fake_types)
+        with patch.dict(os.environ, {"AGENT_MODE": "gemini", "GEMINI_API_KEY": "test-key"}), \
+             patch.dict(sys.modules, {"google": types.SimpleNamespace(genai=fake_genai), "google.genai": fake_genai, "google.genai.types": fake_types}):
+            result = asyncio.run(generate(GenerateRequest(runId="multi", userContext={}, epic={}, records=[self.record, second]), "test-key"))
+        self.assertEqual(len(calls), 2)
+        self.assertIn("unaccounted_records", calls[1]["contents"])
+        self.assertEqual(len(result["proposals"][0]["evidence"]), 2)
+
+    def test_exclusion_requires_known_record_and_reason_in_result(self):
+        from app.main import ProposalOutput, _filter_proposals
+        second = {**self.record, "id": "second", "title": "다른 주제"}
+        proposal = asyncio.run(generate(GenerateRequest(runId="mock", userContext={}, epic={}, records=[self.record]), "test-key"))["proposals"][0]
+        records = [self.record, second]
+        for exclusions in ([], [{"recordId": "unknown", "reason": "unrelated"}], [{"recordId": "second", "reason": "  "}]):
+            output = ProposalOutput(proposals=[{**proposal, "excludedRecords": exclusions}])
+            self.assertEqual(_filter_proposals(output, records), [])
+        output = ProposalOutput(proposals=[{**proposal, "excludedRecords": [{"recordId": "second", "reason": "이번 학습 목표와 다른 주제"}]}])
+        result = _filter_proposals(output, records)[0]
+        self.assertIn("다른 주제: 이번 학습 목표와 다른 주제", result["resultMarkdown"])
 
     def test_openai_can_cite_results_at_end_of_long_record(self):
         import json
