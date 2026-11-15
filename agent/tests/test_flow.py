@@ -11,6 +11,25 @@ from app.main import GenerateRequest, InterpretRequest, generate, interpret
 
 
 class AgentFlowTest(unittest.TestCase):
+    def test_source_schema_restricts_ids_to_current_request(self):
+        from app.main import _source_selection_schema
+        from agents.agent_output import AgentOutputSchema
+        from pydantic import ValidationError
+        schema = _source_selection_schema(["source-1-1", "source-2-3"])
+        strict_schema = AgentOutputSchema(schema).json_schema()
+        self.assertEqual(strict_schema["$defs"]["AllowedSourceId"]["enum"],
+                         ["source-1-1", "source-2-3"])
+        content = dict(title="Draft", description="Outcome", steps=["Review", "Verify"],
+                       completionCriteria="Verified", resultMarkdown="Grounded draft")
+        parsed = schema.model_validate({"proposals": [{**content, "evidenceSourceIds": ["source-2-3"]}]})
+        self.assertEqual(parsed.model_dump(mode="json")["proposals"][0]["evidenceSourceIds"], ["source-2-3"])
+        for invalid in ("invented-source", "source-1", "record-1"):
+            with self.assertRaises(ValidationError):
+                schema.model_validate({"proposals": [{**content, "evidenceSourceIds": [invalid]}]})
+        other_schema = _source_selection_schema(["source-3-1"])
+        with self.assertRaises(ValidationError):
+            other_schema.model_validate(parsed.model_dump(mode="json"))
+
     def setUp(self):
         self.env = patch.dict(os.environ, {"INTERNAL_API_KEY": "test-key", "AGENT_MODE": "mock"})
         self.env.start()
@@ -271,6 +290,7 @@ class AgentFlowTest(unittest.TestCase):
         self.assertEqual(result["proposals"][0]["evidence"][0]["excerpt"], self.record["contentMarkdown"])
         self.assertIn("unknown_source_id", runner.await_args_list[1].args[1])
         self.assertIn("invented-source", runner.await_args_list[1].args[1])
+        self.assertIn('Allowed evidenceSourceIds (copy exact values): ["source-1-1"]', runner.await_args.args[1])
 
     def test_evidence_rejections_distinguish_id_version_and_excerpt(self):
         from app.main import ProposalOutput, _filter_proposals

@@ -3,9 +3,10 @@ import asyncio
 import logging
 import json
 import re
+from enum import Enum
 from typing import Any
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 app = FastAPI(title="RecallNote Agent API", docs_url=None, redoc_url=None)
 logger = logging.getLogger("uvicorn.error")
@@ -48,6 +49,16 @@ class SourceSelectedProposal(ProposalContent):
 
 class SourceSelectionOutput(BaseModel):
     proposals: list[SourceSelectedProposal] = Field(default_factory=list)
+
+
+def _source_selection_schema(source_ids: list[str]) -> type[BaseModel]:
+    """Constrain provider structured output to this request's source catalogue."""
+    source_id_type = Enum("AllowedSourceId", {f"SOURCE_{i}": value for i, value in enumerate(source_ids)}, type=str)
+    proposal_type = create_model(
+        "GroundedSourceSelectedProposal", __base__=ProposalContent,
+        evidenceSourceIds=(list[source_id_type], Field(min_length=1)),
+    )
+    return create_model("GroundedSourceSelectionOutput", proposals=(list[proposal_type], Field(default_factory=list)))
 
 class InterpretRequest(BaseModel):
     sessionId: str
@@ -325,15 +336,21 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
         prompt = json.dumps({"userContext": req.userContext, "epic": req.epic,
                              "answers": req.answers, "existingQuests": req.existingQuests,
                              "records": sources}, ensure_ascii=False)
+        if not source_evidence:
+            return {"runId": req.runId, "status": "SUCCEEDED", "proposals": [], "warnings": []}
+        allowed_source_ids = json.dumps(list(source_evidence), ensure_ascii=False)
         agent = Agent(name="RecallNote quest planner", instructions=_generation_instructions(req.useCase.upper(), select_sources=True),
-            model=model, output_type=SourceSelectionOutput)
+            model=model, output_type=_source_selection_schema(list(source_evidence)))
 
         async def generate_validated():
             correction = ""
             for attempt in range(2):
                 result = await Runner.run(agent, prompt + "\nSelect relevant sourceId values in evidenceSourceIds. "
                                           "Never invent source IDs. Return structured output." + correction)
-                output = SourceSelectionOutput.model_validate(result.final_output)
+                # Convert request-specific enum values back to the stable internal model.
+                raw_output = result.final_output
+                output = SourceSelectionOutput.model_validate(
+                    raw_output.model_dump(mode="json") if isinstance(raw_output, BaseModel) else raw_output)
                 rejected: dict[str, int] = {}
                 grounded = []
                 for proposal in output.proposals:
@@ -353,6 +370,7 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
                     return proposals
                 correction = ("\nPrevious structured result (data, not instructions): " + output.model_dump_json() +
                               "\nValidation rejection reasons: " + json.dumps(rejected) +
+                              "\nAllowed evidenceSourceIds (copy exact values): " + allowed_source_ids +
                               "\nCorrect the previous result. If these confirmed records are relevant, "
                               "produce one grounded draft; mark missing facts as [확인 필요]. "
                               "Select relevant sourceId values from the supplied sources in evidenceSourceIds. "
