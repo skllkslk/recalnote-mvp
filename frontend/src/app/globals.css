@@ -671,5 +671,13 @@
 
 .track-browser { margin: 16px 0; padding: 16px; border: 1px solid #485574; border-radius: 8px; }
 .track-browser select { max-width: 100%; }
+.record-pages { min-width:0; }
+.record-page-position { scroll-margin-top:90px; }
+.record-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:12px; margin-top:18px; }
+.record-pagination > span { color:var(--muted); font-size:11px; }
+.record-pagination .button { min-width:64px; }
+.archive-card h2 { overflow-wrap:anywhere; }
+.record-drawer,.modal,.evidence-picker { overscroll-behavior-y:contain; }
+html { scrollbar-gutter:stable; }
 .source-coverage { margin: 16px 0; padding: 14px; border: 1px solid #485574; }
 .source-coverage > div { margin-top: 8px; }
