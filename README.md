@@ -1,58 +1,126 @@
 # RecallNote MVP
 
-RecallNote turns freely entered experience into a reviewable career draft or learning roadmap. The primary MVP flow is:
+RecallNote는 프로젝트 경험과 학습 기록을 모아, 원본 근거를 검토할 수 있는 **경력기술서 초안**이나 **학습 로드맵**으로 만드는 웹 앱입니다. 사용자가 결과를 검토하고 승인하면 수정한 본문과 근거가 퀘스트로 저장됩니다.
 
-```text
-Profile / Epic selection (CAREER or LEARNING)
-  → optional structured fields + free text
-  → NPC dialogue: role / level → facts confirmation → evidence confirmation
-  → editable result review → approve or reject
+## 현재 구현
+
+| 기능 | 동작 |
+| --- | --- |
+| 프로필과 Epic | 목표에 따라 CAREER 또는 LEARNING Epic을 선택합니다. Epic은 결과물의 방향과 완료 기준을 담습니다. |
+| 내 경험 | 기록을 직접 작성하거나 Markdown 파일과 Notion 내보내기 ZIP에서 가져옵니다. 검색, 트랙별 필터, 원본 상세 보기, 수정과 삭제를 지원합니다. 추천 트랙은 제목·본문·Notion 경로를 바탕으로 계산합니다. |
+| NPC 대화 | 저장된 기록을 최대 20개 선택하거나 새 경험을 입력합니다. 여러 기록을 선택하면 이번에 사용할 범위를 확인하고, 역할 또는 학습 수준과 사실·근거를 확인한 뒤 초안을 생성합니다. 진행 중인 세션은 새로고침 후 이어갈 수 있습니다. |
+| 결과 검토와 퀘스트 | Markdown 초안과 근거 발췌를 함께 확인합니다. 결과를 편집하고 승인하면 퀘스트로 저장되며, 거절하면 제안 상태가 변경됩니다. |
+| 작성 도구와 학습 화면 | 작성 스튜디오에서 저장된 퀘스트와 원본을 바탕으로 템플릿 초안을 만들고 복사하거나 Markdown으로 내려받을 수 있습니다. 학습 노트와 기억 지도에서 기록과 퀘스트를 살펴볼 수 있습니다. |
+| 로그인 | 운영 환경은 Google OIDC 로그인, PostgreSQL 기반 세션, 사용자별 데이터 접근 제어를 사용합니다. |
+
+## 아키텍처
+
+```mermaid
+flowchart LR
+    User["사용자 브라우저"] <-->|"화면 · 동일 출처 요청"| Web["Next.js"]
+    Web <-->|"/api/v1/* · /auth/*"| Core["Spring Boot Core API"]
+    Core <-->|"카드 요청 · 결과 생성"| Agent["FastAPI Agent"]
+    Core <-->|"기록 · 세션 · 결과"| DB[("PostgreSQL")]
+    Core <-->|"OIDC"| Google["Google 로그인"]
+    Agent <-->|"실제 모델 모드"| Model["OpenAI 또는 Gemini"]
 ```
 
-Internally, Spring stores Record → Evidence → Proposal; approval atomically creates the Quest with the reviewed Markdown, evidence links, and a QuestEvent. A proposed Quest remains a Proposal until the person approves it. The Agent cannot approve or write these entities itself.
+| 구성 | 책임 | 주요 코드 |
+| --- | --- | --- |
+| Next.js 16 · React 19 | 보관함, NPC 카드, 검토 화면과 작성 도구를 제공합니다. 동일 출처의 API 및 인증 요청을 Spring으로 전달합니다. | [화면](frontend/src/app/page.tsx) · [요청 프록시](frontend/src/lib/upstream.ts) |
+| Spring Boot 3 · Java 17 | 인증, 기록과 Epic, 세션 상태, 입력 검증, Agent 호출, 제안과 승인 트랜잭션을 담당합니다. | [Core API](backend/src/main/java/com/recallnote/core/ApiController.java) · [인증 설정](backend/src/main/java/com/recallnote/core/SecurityConfig.java) |
+| FastAPI · Python 3.12 | 대화 카드 구성, 결과 제안 생성, 인용 근거와 원본 반영 범위 검증을 담당합니다. | [Agent 진입점](agent/app/main.py) |
+| PostgreSQL 16 · Flyway | 원본 기록과 버전, 로그인·대화 세션, 제안, 근거, 승인 결과와 이벤트를 저장합니다. | [DB 마이그레이션](backend/src/main/resources/db/migration) |
 
-```text
-Next.js → Spring Boot → FastAPI Agent → Spring Boot/PostgreSQL → user review → Quest
+Compose에서는 Core API가 내부 네트워크의 `http://agent-api:8000`으로 Agent를 호출합니다. 내부 요청은 `X-Internal-Api-Key`로 인증합니다. 로컬 Next.js는 별도 프로세스로 실행합니다.
+
+## 기록에서 퀘스트까지
+
+```mermaid
+sequenceDiagram
+    actor User as 사용자
+    participant Web as Next.js
+    participant Core as Spring Boot
+    participant Agent as FastAPI Agent
+    participant DB as PostgreSQL
+
+    User->>Web: 기록 선택 또는 입력, Epic 선택
+    Web->>Core: NPC 세션 시작
+    Core->>DB: 세션 저장, 원본 조회
+    loop 생성 조건 확인까지
+        Core->>Agent: 후보 기록과 현재 답변 전달
+        Agent-->>Core: 범위, 역할·수준, 사실 또는 근거 카드
+        Core-->>Web: 카드 표시용 세션 반환
+        User->>Web: 카드 응답
+        Web->>Core: 답변 제출
+    end
+    Core->>Agent: 확인된 범위로 결과 생성 요청
+    Agent-->>Core: Markdown 초안과 검증된 인용
+    Core->>DB: 인용 재검증 후 제안과 근거 저장
+    Core-->>Web: 검토 대기 초안 반환
+    User->>Web: 결과 검토 및 승인 또는 거절
+    Web->>Core: 결정과 편집 내용 전달
+    alt 승인
+        Core->>DB: 기록 버전 재검증, 퀘스트·근거·이벤트 저장
+    else 거절
+        Core->>DB: 제안·세션을 거절로 기록
+    end
 ```
 
-Spring Boot (Java 17) is the public API and PostgreSQL is the source of truth. FastAPI is only reachable on the Compose network; the Core API calls it at `http://agent-api:8000` with `INTERNAL_API_KEY`. Schema changes are applied by Flyway at startup. PostgreSQL data lives in the `postgres_data` named volume.
+- **Record**는 원본 Markdown과 버전을 보관합니다. 대화에서 추가한 설명도 별도의 기록으로 저장됩니다.
+- **Evidence**는 기록 ID, 버전, 원문 발췌로 구성됩니다. 한 기록 안의 서로 다른 근거 구절도 보존합니다.
+- **Proposal**은 검토 대기 상태의 초안입니다. 제목, 목표, 단계, 완료 기준, 제안 이유, 결과 Markdown과 근거를 담습니다.
+- **Quest**는 사용자 승인 결과입니다. Spring은 최신 기록이 근거의 버전과 일치하는지 다시 확인하고, 검토한 결과와 근거 및 생성 이벤트를 한 트랜잭션으로 저장합니다. 근거 기록이 수정·삭제되면 승인은 HTTP 409를 반환합니다. 거절한 제안에서는 퀘스트가 생성되지 않습니다.
 
-## Implemented MVP behavior
+## Agent가 하는 일
 
-- Create, list, view, update, and soft-delete Markdown records; read the active Epic.
-- NPC sessions generate from the chosen project's records, supplements and confirmed answers, together with profile, Epic, and existing quest context. Direct generation without an NPC session returns 410.
-- Review and edit the generated Markdown result, objective, steps, completion criteria, rationale, and source evidence before approval; rejection creates no Quest.
-- On acceptance, persist the edited title, objective, steps, completion criteria, evidence links, and creation event. The quest board displays the structured plan.
+### 1. 다음 대화 카드 결정
 
-Proposal and quest steps are stored as JSONB; completion criteria are stored separately. Existing rows are preserved by Flyway migration V2.
+`POST /internal/v1/agent-sessions/interpret`는 후보 기록, 보충 기록, 현재 답변을 받아 다음 카드를 규칙으로 구성합니다.
 
-Flyway V6 adds onboarding completion and the `result_markdown` columns on proposals and quests. Existing quests remain readable. First-time users choose an Epic on the profile screen. Pending NPC sessions can be resumed after reload using `/api/v1/agent-sessions/latest`.
+- 후보 기록이 여러 개면 명시된 `project:` 태그 또는 본문의 프로젝트명으로 묶습니다. 프로젝트 정보가 없는 기록은 개별 후보로 제시합니다. 여러 묶음이 있으면 선택한 전체 기록을 사용할 수도 있습니다.
+- CAREER는 담당 역할, LEARNING은 현재 학습 수준을 묻습니다. 이어서 사실과 근거를 확인합니다.
+- 보충이나 정정을 선택하면 기존 원본과 추가 기록을 함께 사용하고 사실·근거를 다시 확인합니다. 명시적으로 교체하면 이번 세션의 대상만 새 기록으로 바뀝니다.
 
-The default `AGENT_MODE=mock` exercises the full flow without a model key and returns a deterministic draft template or learning roadmap. NPC questions and confirmation cards currently follow a fixed short flow. `AGENT_MODE=openai` uses the Agents SDK, while `AGENT_MODE=gemini` uses the Google GenAI SDK and `GEMINI_API_KEY` to generate the final result. Review and edit generated facts before accepting them.
+### 2. 확인된 입력으로 초안 생성
 
-For OpenAI on Railway, set `AGENT_MODE=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL=gpt-4.1-mini` on the **agent service**, then redeploy it with this source. The model defaults to `gpt-4.1-mini` and can be overridden without editing code. Keep `INTERNAL_API_KEY` identical on the API and agent services. No frontend or database change is required. OpenAI failures log the model, exception type, HTTP status and provider request ID without recording prompts, keys or response bodies. Generation is limited to 75 seconds, within the core API's 90-second agent timeout.
+`POST /internal/v1/quest-proposals/generate`는 선택한 기록과 보충 기록, 확인된 답변, 프로필, Epic, 기존 활성 퀘스트를 받습니다. CAREER는 본인의 역할·행동·검증 가능한 성과를 중심으로 경력기술서 초안을 만들고, LEARNING은 목표·실습·검증 기준을 포함하는 로드맵을 만듭니다.
 
-OpenAI selects source IDs from server-created excerpt chunks (up to 4,800 characters per record in 240-character chunks; longer records use the first and last 2,400 characters). The server resolves only those selected IDs to the original record ID, version and exact text, then validates them against the supplied records. The model does not rewrite citations, and unknown source IDs never fall back to another record. An empty or unusable result receives at most one correction attempt within the same 75-second deadline; this can incur a second model call. Validation logs show generated/usable proposal counts and rejection categories without record contents. If no usable result remains, the agent and core API return 422 instead of silently repeating the evidence confirmation card. Deploy the agent, backend and frontend together for this validation and user-facing error behavior. Subsequent changes to source selection alone require only an agent deployment.
+| 모드 | 생성 방식 | 설정 |
+| --- | --- | --- |
+| `mock` | 고정 템플릿으로 대화와 저장 흐름을 확인합니다. Compose 기본값입니다. | 모델 키 없이 실행 |
+| `openai` | OpenAI Agents SDK를 사용합니다. 모델은 요청별 스키마에 허용된 근거 ID를 선택하고, Agent가 이를 정확한 원문과 버전으로 복원합니다. 기록마다 최대 4,800자를 240자 단위로 제공하며 긴 기록은 앞뒤 2,400자를 사용합니다. | `OPENAI_API_KEY`, 선택 `OPENAI_MODEL` |
+| `gemini` | Google GenAI SDK를 사용합니다. 기록별 앞 1,200자를 입력으로 전달하고 모델이 반환한 발췌를 원문과 대조합니다. | `GEMINI_API_KEY`, 선택 `GEMINI_MODEL` |
 
-## Prerequisites
+### 3. 근거 검증과 결과 반환
 
-- Docker Desktop with Docker Compose v2
-- For frontend work, Node.js 22 and pnpm (Next.js app in `frontend/`)
+실제 모델 모드에서는 제안에 유효한 인용이 하나 이상 있어야 하며, 비어 있지 않은 모든 대상 기록은 유효한 인용이나 구체적인 제외 이유로 설명되어야 합니다. 제외 이유는 초안에 표시됩니다. 유효한 제안이 없으면 최대 한 번 교정을 요청합니다. 모델 생성과 교정은 총 75초 안에서 실행되며, 교정 후에도 사용할 수 있는 제안이 없으면 HTTP 422로 실패를 알립니다.
 
-## Start locally (PowerShell)
+Spring은 반환된 인용이 요청 범위 내의 사용자 기록에 속하는지, 버전이 맞는지, 원문에 그대로 존재하는지 검증한 뒤 제안을 저장합니다. 검토 화면에서 사용자가 초안의 의미와 사실관계를 확인하고 승인 여부를 결정합니다. [Agent API 계약](docs/agent-quest-contract.md) · [다중 원본과 추천 트랙](docs/multi-source-tracks.md)
 
-Notion Markdown & CSV export ZIPs can be uploaded at **내 경험 → 기록 가져오기 → Notion ZIP**. See [Notion import](docs/notion-import.md) for limits, duplicate handling, and deployment order.
+## 로컬 실행
+
+Docker Desktop과 Docker Compose v2, Node.js 22 및 pnpm이 필요합니다. 저장소 루트에서 `.env`가 없으면 예제 파일을 복사하고 `POSTGRES_PASSWORD`, `DB_PASSWORD`, `INTERNAL_API_KEY`를 설정합니다. 두 DB 비밀번호는 같은 값으로 설정합니다.
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and replace POSTGRES_PASSWORD, DB_PASSWORD and INTERNAL_API_KEY.
+# .env 값을 설정한 뒤 실행합니다.
 docker compose up --build -d
 docker compose ps
 ```
 
-Wait until all three services report healthy. The public API is at `http://localhost:8080`; FastAPI has no published host port. The local profile uses `DEV_USER_ID` and requires no login. The agent defaults to deterministic mock mode, so an OpenAI key is not needed for the end-to-end flow.
+Core API는 `http://localhost:8080`에서 실행됩니다. 세 서비스가 정상 상태가 되면 다른 PowerShell 창에서 프런트엔드를 실행합니다.
 
-Example flow with curl (PowerShell users can run these in Git Bash, WSL, or use `Invoke-RestMethod`):
+```powershell
+Set-Location frontend
+pnpm install
+pnpm dev
+```
+
+`http://localhost:3000`에서 **Epic 선택 → 기록 입력 또는 선택 → NPC 대화 → 결과 검토 → 승인**을 확인할 수 있습니다. 기본 로컬 프로필은 `DEV_USER_ID`로 동작합니다. 다른 Core API 주소를 사용하면 Next.js에 `API_BASE_URL`을 설정합니다. `docker compose down`으로 종료하면 PostgreSQL 데이터 볼륨은 보존됩니다. [로컬 개발 및 점검 절차](docs/local-development.md)
+
+<details>
+<summary>로컬 API로 단일 기록 흐름 확인</summary>
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/records -H 'Content-Type: application/json' \
@@ -71,45 +139,17 @@ curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/approve
 curl http://localhost:8080/api/v1/quests
 ```
 
-`POST /api/v1/records` → NPC session → target/fact/evidence confirmation → `PENDING` proposal → user review → approve or reject. Acceptance stores the quest, all distinct evidence passages, reviewed result body, and creation event in one database transaction. Spring validates evidence ownership, supplied record scope, version, and verbatim excerpts before storing evidence. Approval rejects changed or deleted source records. Flyway V9 retains existing evidence and backfills legacy approved-result excerpts. See [result quality evaluation](docs/result-quality-evaluation.md) for synthetic regression cases and opt-in model evaluation.
+</details>
 
-## Stop and preserve data
+## 테스트와 배포
 
-```powershell
-docker compose down
-```
+| 범위 | 실행 | 확인 내용 |
+| --- | --- | --- |
+| Agent | `agent/`에서 `python -m unittest discover -s tests -v` | 기록 범위, 보충 처리, 인용 무결성과 평가 규칙 |
+| 백엔드 | JDK 17로 `backend/`에서 `mvn test` | 세션과 승인, 사용자별 접근 제어, Notion 가져오기. PostgreSQL 통합 테스트는 별도 테스트 DB 설정이 필요합니다. |
+| 프런트엔드 | `frontend/`에서 `pnpm test:auth`, `pnpm build` | 프록시 인증 테스트와 프로덕션 빌드 |
+| 실제 모델 품질 | [결과 품질 평가 절차](docs/result-quality-evaluation.md) | 테스트 기록을 바탕으로 개인 기여, 사실의 정확성, 프로젝트 혼합 여부와 근거의 적절성을 평가합니다. |
 
-The named volume remains. To remove all local database data, run `docker compose down -v` (destructive).
+기존 Python 통합 테스트는 헤더 인증 제거 후 비활성화되어 있습니다. 브라우저에서 전체 사용자 흐름을 확인하고, 필요한 경우 별도 테스트 DB로 PostgreSQL 통합 테스트를 실행합니다.
 
-## Configuration and deployment
-
-Copy `.env.example` to `.env`; never commit `.env`. Production uses Google OIDC login and PostgreSQL-backed sessions. Set `SPRING_PROFILES_ACTIVE=prod`, `DEV_USER_ENABLED=false`, `SESSION_COOKIE_SECURE=true`, the fixed HTTPS `PUBLIC_BASE_URL`, and Google OAuth credentials. `X-Authenticated-User` is no longer accepted. See [Google login setup and verification](docs/social-login.md) before deploying the backend and frontend together.
-
-For actual model calls, set `AGENT_MODE=gemini` and provide `GEMINI_API_KEY` to the agent container only. Optionally set `GEMINI_MODEL` to a model enabled for your Gemini API account. Keep provider keys out of browser variables and source control. Compose exposes core API only on loopback by default; terminate TLS and configure Google login before public deployment. Configure `AGENT_BASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, credentials and service keys through environment variables without changing application code.
-
-Health endpoints: Spring `/actuator/health/liveness` and `/actuator/health/readiness`; internal Agent `/health/live` and `/health/ready`. PostgreSQL uses `pg_isready`. The Agent container has no host port mapping. The Next.js route handler proxies browser requests to Spring. Set `API_BASE_URL=http://localhost:8080` in the Next.js process only when Spring is not at its default address; the browser calls the same-origin Next.js proxy.
-
-Flyway migrations live in `backend/src/main/resources/db/migration`. Hibernate schema generation is set to `validate`. The initial schema uses PostgreSQL JSONB for tags and leaves pgvector installation to a later migration; record text remains the authoritative data.
-
-## Troubleshooting
-
-- `docker compose config` checks Compose interpolation and YAML.
-- `docker compose logs -f core-api agent-api postgres` shows startup and migration logs.
-- If credentials change after first startup, the existing named volume retains the old database credentials; recreate local data with `docker compose down -v` only if it is safe to discard.
-
-## Developer documentation
-
-- [Multi-source generation and recommended tracks](docs/multi-source-tracks.md) describes source coverage, automatic topic classification, deployment and acceptance checks.
-
-The legacy Python flow harness below predates session authentication and no longer authenticates. Use `mvn test` and the opt-in PostgreSQL checks in [social-login.md](docs/social-login.md) for this release. The Compose environment remains available as an isolated database/agent setup:
-
-```powershell
-docker compose -p recallnote-flow-check -f compose.flow-test.yaml up --build -d
-# Wait for http://localhost:18081/actuator/health/readiness to report UP.
-docker compose -p recallnote-flow-check -f compose.flow-test.yaml down -v
-```
-
-This environment uses a separate disposable database and test-only credentials. It does not connect to the normal application's database. Run Agent unit tests from `agent/` with `python -m unittest discover -s tests -v`; run backend tests with JDK 17 and `mvn test`; run the frontend production build with `pnpm build`.
-
-- [Agent quest proposal contract](docs/agent-quest-contract.md) describes the Spring-to-Agent request/response schema, evidence checks, and mock/OpenAI behavior.
-- [Local development and MVP smoke flow](docs/local-development.md) covers Compose, the separate Next.js dev server, and one quest cycle.
+운영 배포에서는 Google OIDC와 세션 쿠키를 설정하고 개발용 사용자 모드를 끕니다. 모델 키는 Agent 서비스에만 설정하고, Core API와 Agent에 동일한 `INTERNAL_API_KEY`를 설정합니다. [소셜 로그인과 배포 설정](docs/social-login.md) · [Notion ZIP 형식과 처리 한도](docs/notion-import.md)
