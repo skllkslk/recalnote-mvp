@@ -246,6 +246,41 @@ def project_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(groups.values())
 
 
+_SUMMARY_TOPICS = {
+    "CAREER": (
+        r"문제|오류|장애|병목|배경|원인|problem|issue|failure|bottleneck",
+        r"담당|기여|설계|구현|개발|수정|적용|해결|implement|design|fix|built",
+        r"성과|결과|개선|감소|증가|검증|테스트|outcome|result|reduc|improv|test|verif",
+    ),
+    "LEARNING": (
+        r"목표|주제|개념|이해|배우|goal|objective|concept|understand",
+        r"실습|연습|적용|구현|예제|practice|exercise|implement|example",
+        r"질문|어려움|검증|확인|테스트|회고|question|challenge|test|verif|review",
+    ),
+}
+
+
+def _record_summary(content: str, use_case: str) -> str:
+    """Pick verbatim passages across the record for each relevant topic."""
+    passages = list(dict.fromkeys(
+        part.strip() for part in re.split(r"\n+|(?<=[.!?])\s+", content)
+        if part.strip() and not re.match(r"^\s*(?:#|\x60{3}|~{3}|!\[)", part)
+    ))
+    if not passages:
+        return content.strip()
+
+    selected = set()
+    for topic in _SUMMARY_TOPICS.get(use_case, _SUMMARY_TOPICS["CAREER"]):
+        scores = [len(set(re.findall(topic, passage.lower()))) for passage in passages]
+        best = max(range(len(passages)), key=scores.__getitem__)
+        if scores[best]:
+            selected.add(best)
+
+    if not selected:
+        selected.update(range(min(3, len(passages))))
+    return "\n".join(passages[index] for index in sorted(selected))
+
+
 @app.post("/internal/v1/agent-sessions/interpret")
 async def interpret(req: InterpretRequest, x_internal_api_key: str | None = Header(default=None)):
     expected = os.getenv("INTERNAL_API_KEY", "")
@@ -297,7 +332,10 @@ async def interpret(req: InterpretRequest, x_internal_api_key: str | None = Head
     if answered not in req.answers:
         return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message=message, cards=project_cards + cards).model_dump()
     if req.answers.get("facts-check") != "confirm":
-        facts = "\n\n".join(f"## {item['title']}\n{str(item.get('contentMarkdown', ''))[:4800]}" + ("\n[이후 내용은 원본 보기에서 확인해 주세요]" if len(str(item.get('contentMarkdown', ''))) > 4800 else "") for item in req.records)
+        facts = "\n\n".join(
+            f"## {item['title']}\n{_record_summary(str(item.get('contentMarkdown', '')), use_case)}"
+            for item in req.records
+        )
         return InterpretOutput(sessionId=req.sessionId, state="NEEDS_INPUT", message="선택한 묶음의 모든 기록을 확인해 주세요.", cards=project_cards + [DynamicCard(type="CONFIRMATION", id="facts-check", title="이 내용으로 결과물을 만들까요?", value=facts + "\n\n역할 / 현재 수준: " + str(req.answers[answered]), sourceRefs=evidence, options=[CardOption(id="confirm", label="맞아요"), CardOption(id="edit", label="내용을 수정할게요")])]).model_dump()
     if evidence:
         cards.append(DynamicCard(type="EVIDENCE", id="source-check", title="선택한 모든 원본 기록을 근거로 사용해도 될까요?", value="\n\n".join(f"{item['title']}\n{str(item.get('contentMarkdown', ''))[:240]}" for item in req.records), sourceRefs=evidence, options=[CardOption(id="confirm", label="이 근거를 사용할게요"), CardOption(id="supplement", label="내용을 덧붙일게요"), CardOption(id="replace", label="새 경험으로 교체할게요"), CardOption(id="none", label="근거 없음")]))

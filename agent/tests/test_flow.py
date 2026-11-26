@@ -102,6 +102,19 @@ class AgentFlowTest(unittest.TestCase):
         self.assertEqual(result["cards"][0]["id"], "source-check")
         self.assertEqual(result["cards"][0]["sourceRefs"][0]["recordId"], "record-1")
 
+    def test_fact_summary_selects_relevant_passages_from_later_in_the_record(self):
+        introduction = "회의 일정과 참석자 안내입니다. " * 300
+        for use_case, answers, passages in (
+            ("CAREER", {"role": "debug"}, ("권한 오류가 발생했다.", "권한 검사 로직을 수정했다.", "회귀 테스트에서 재현되지 않았다.")),
+            ("LEARNING", {"learning-level": "basic"}, ("학습 목표는 세션 만료 흐름 이해다.", "만료 케이스를 실습했다.", "테스트로 만료 시 응답을 검증했다.")),
+        ):
+            with self.subTest(use_case=use_case):
+                self.record["contentMarkdown"] = introduction + "\n\n" + "\n".join(passages)
+                summary = self.interpret(answers, use_case)["cards"][0]["value"]
+                for passage in passages:
+                    self.assertIn(passage, summary)
+                self.assertNotIn("회의 일정", summary)
+
     def test_declined_evidence_and_fact_edits_request_new_record(self):
         for answers in ({"source-check": "none"}, {"source-check": "replace"}, {"facts-check": "edit"}):
             with self.subTest(answers=answers):
