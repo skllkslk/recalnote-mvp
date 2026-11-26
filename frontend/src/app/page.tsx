@@ -51,7 +51,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       throw new Error("원본 근거와 일치하는 결과물을 만들지 못했어요. 다시 시도하거나 ‘다른 기록을 찾을게요’로 내용을 보완해 주세요.")
     }
     const detail = await response.text()
-    let message = response.status === 413 ? "파일이 너무 큽니다. ZIP 파일은 4 MiB 이하로 선택해 주세요." : `요청에 실패했습니다 (${response.status})`
+    let message = response.status === 413 ? "파일이 너무 큽니다. ZIP 파일은 10 MiB 이하로 선택해 주세요." : `요청에 실패했습니다 (${response.status})`
     try { message = (JSON.parse(detail) as { message?: string }).message || message } catch { /* Use a readable fallback for infrastructure errors. */ }
     throw new Error(message)
   }
@@ -328,7 +328,7 @@ export default function App() {
     try {
       if (importMode === "notion") {
         if (!notionZip || !notionZip.name.toLowerCase().endsWith(".zip")) throw new Error("Notion에서 내보낸 ZIP 파일을 선택해 주세요.")
-        if (notionZip.size > 4 * 1024 * 1024) throw new Error("ZIP 파일이 4 MiB를 초과했습니다. Notion에서 페이지나 프로젝트를 나누어 여러 개의 ZIP으로 내보낸 뒤 각각 업로드해 주세요.")
+        if (notionZip.size > 10 * 1024 * 1024) throw new Error("ZIP 파일이 10 MiB를 초과했습니다. Notion에서 페이지나 프로젝트를 나누어 여러 개의 ZIP으로 내보낸 뒤 각각 업로드해 주세요.")
         const form = new FormData()
         form.append("file", notionZip)
         form.append("project", importProject.trim())
@@ -553,9 +553,9 @@ export default function App() {
           <label className="field-label world-project-field">프로젝트 연결 <span className="label-hint">선택 사항 · 모든 페이지를 같은 프로젝트에 연결</span><input maxLength={100} disabled={busy} value={importProject} onChange={event => setImportProject(event.target.value)} placeholder="예: 정산 시스템" /></label>
           {importMode === "notion" ? <>
             <div className="import-guide" role="note"><strong>Notion에서 이렇게 내보내세요</strong><ul><li>메뉴 → 내보내기 → <b>Markdown &amp; CSV</b> 선택</li><li><b>하위 페이지 포함</b> 켜기</li><li>내려받은 ZIP은 압축 해제하지 않고 그대로 선택</li></ul></div>
-            <label className="drop-zone"><input type="file" accept=".zip,application/zip" disabled={busy} onChange={event => setNotionZip(event.target.files?.[0] ?? null)} /><span className="drop-icon">↥</span><strong>Notion ZIP 파일을 선택하세요</strong><small>ZIP 4 MiB 이하 · Markdown 최대 2,000페이지 · 압축 해제 후 총 25 MiB</small><span className="button secondary">ZIP 선택</span></label>
+            <label className="drop-zone"><input type="file" accept=".zip,application/zip" disabled={busy} onChange={event => setNotionZip(event.target.files?.[0] ?? null)} /><span className="drop-icon">↥</span><strong>Notion ZIP 파일을 선택하세요</strong><small>ZIP 10 MiB 이하 · Markdown 최대 2,000페이지 · 압축 해제 후 총 25 MiB</small><span className="button secondary">ZIP 선택</span></label>
             {notionZip && <div className="selected-files"><div className="file-row"><span>▤</span><strong>{notionZip.name}</strong><small>{Math.max(1, Math.round(notionZip.size / 1024))} KB</small></div></div>}
-            <div className="import-guide secondary-guide" role="note"><strong>가져오기 전에 확인하세요</strong><ul><li>페이지 본문·속성·원본 경로를 저장합니다.</li><li>이미지·PDF·첨부파일은 가져오지 않으며, 첨부 링크만 원문에 남습니다.</li><li>ZIP은 <b>4 MiB 이하</b>여야 합니다. 크면 페이지나 프로젝트를 나누어 여러 번 업로드하세요.</li><li>같은 페이지와 본문은 중복 저장하지 않으며, 기존 기록을 덮어쓰지 않습니다.</li><li>저장 중 오류가 나면 이번 ZIP 전체 적재가 취소됩니다.</li></ul></div>
+            <div className="import-guide secondary-guide" role="note"><strong>가져오기 전에 확인하세요</strong><ul><li>페이지 본문·속성·원본 경로를 저장합니다.</li><li>이미지·PDF·첨부파일은 가져오지 않으며, 첨부 링크만 원문에 남습니다.</li><li>ZIP은 <b>10 MiB 이하</b>여야 합니다. 크면 페이지나 프로젝트를 나누어 여러 번 업로드하세요.</li><li>같은 페이지와 본문은 중복 저장하지 않으며, 기존 기록을 덮어쓰지 않습니다.</li><li>저장 중 오류가 나면 이번 ZIP 전체 적재가 취소됩니다.</li></ul></div>
           </> : importMode === "files" ? <>
             <label className="drop-zone"><input type="file" accept=".md,text/markdown" multiple disabled={busy} onChange={event => void filesChanged(event)} /><span className="drop-icon">↥</span><strong>Markdown 파일을 선택하세요</strong><small>여러 개의 .md 파일을 한 번에 가져올 수 있습니다.</small><span className="button secondary">파일 선택</span></label>
             {importFiles.length > 0 && <div className="selected-files"><div className="plan-heading"><strong>가져올 파일</strong><span>{importFiles.length}개</span></div>{importFiles.map(file => <div className="file-row" key={`${file.name}-${file.size}`}><span>▤</span><strong>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></div>)}</div>}

@@ -34,6 +34,6 @@ public class NotionImportController {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<Map<String,String>> tooLarge() {
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("message", "ZIP 파일은 4 MiB 이하로 선택해 주세요."));
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("message", "ZIP 파일은 10 MiB 이하로 선택해 주세요."));
     }
 }

@@ -20,7 +20,7 @@ import java.util.zip.ZipInputStream;
 
 /** Reads Notion Markdown exports in memory; archive paths are never extracted to disk. */
 final class NotionZipReader {
-    static final int MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+    static final int MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
     private static final int MAX_PAGE_BYTES = 1024 * 1024;
     private static final long MAX_EXPANDED_BYTES = 25L * 1024 * 1024;
     private static final int MAX_ENTRIES = 5000;
@@ -35,7 +35,7 @@ final class NotionZipReader {
     private long expandedBytes;
 
     static Archive read(byte[] bytes) {
-        if (bytes.length > MAX_UPLOAD_BYTES) throw invalid("ZIP 파일은 4 MiB 이하로 선택해 주세요.");
+        if (bytes.length > MAX_UPLOAD_BYTES) throw invalid("ZIP 파일은 10 MiB 이하로 선택해 주세요.");
         var reader = new NotionZipReader();
         reader.archive(bytes, "", 0);
         if (reader.pages.isEmpty()) throw invalid("가져올 Markdown 페이지가 없습니다. Notion에서 Markdown & CSV 형식으로 내보내 주세요.");
@@ -63,7 +63,7 @@ final class NotionZipReader {
                     size += length;
                     if (expandedBytes > MAX_EXPANDED_BYTES) throw invalid("압축 해제한 데이터는 총 25 MiB까지 가져올 수 있습니다.");
                     if (markdown && size > MAX_PAGE_BYTES) throw invalid("Markdown 페이지 하나의 크기는 1 MiB 이하여야 합니다.");
-                    if (nested && size > MAX_UPLOAD_BYTES) throw invalid("중첩 ZIP 파일은 4 MiB 이하여야 합니다.");
+                    if (nested && size > MAX_UPLOAD_BYTES) throw invalid("중첩 ZIP 파일은 10 MiB 이하여야 합니다.");
                     if (markdown || nested) output.write(buffer, 0, length);
                 }
                 if (entry.isDirectory()) continue;

@@ -43,9 +43,9 @@ Soft-deleted records can be imported again. A partial unique index also protects
 The archive is validated before any insert. Inserts use batches of 100 inside one transaction: a failure cancels the whole import.
 If a response is lost after a successful commit, retrying the same archive is safe.
 
-Limits: uploaded ZIP **4 MiB**, expanded data **25 MiB**, one Markdown page **1 MiB**, **2,000 pages**, **5,000 archive entries**,
+Limits: uploaded ZIP **10 MiB**, expanded data **25 MiB**, one Markdown page **1 MiB**, **2,000 pages**, **5,000 archive entries**,
 and up to two nested ZIP layers. ZIP paths are never extracted to disk; absolute/traversal paths, invalid UTF-8, and corrupt entries are rejected.
-The 4 MiB upload limit leaves room for multipart overhead when proxied through Vercel. Larger exports must be split into smaller Notion exports.
+The 10 MiB limit applies when the upload route runs on Railway. If the upload passes through a Vercel Function, keep individual ZIPs at 4 MiB or below to leave room for multipart overhead within Vercel's 4.5 MB request limit.
 
 ## Deployment
 
