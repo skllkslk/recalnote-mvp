@@ -347,9 +347,13 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
     if not expected or x_internal_api_key != expected:
         raise HTTPException(status_code=401, detail="unauthorized")
     mode = os.getenv("AGENT_MODE", "mock").lower()
+    record_summary = "\n\n".join(
+        f"{record['title']}\n{_record_summary(record['contentMarkdown'], req.useCase.upper())}"
+        for record in req.records
+    )
     if mode == "gemini":
         proposals = await _generate_with_gemini(req)
-        return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}
+        return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": [], "recordSummary": record_summary}
     if mode == "openai":
         if not os.getenv("OPENAI_API_KEY"):
             raise HTTPException(status_code=503, detail="OpenAI API is not configured")
@@ -427,7 +431,7 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
                 getattr(exc, "status_code", None), getattr(exc, "request_id", None),
             )
             raise HTTPException(status_code=502, detail="OpenAI generation failed") from exc
-        return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}
+        return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": [], "recordSummary": record_summary}
     proposals = []
     existing_titles = {str(q.get("title", "")).strip().casefold() for q in req.existingQuests}
     suffix = "학습 로드맵 만들기" if req.useCase.upper() == "LEARNING" else "경력기술서 항목 만들기"
@@ -470,4 +474,4 @@ async def generate(req: GenerateRequest, x_internal_api_key: str | None = Header
                           "resultMarkdown": result_markdown,
                           "evidence": [{"recordId": source["id"], "recordVersion": source["version"],
                                         "excerpt": source["contentMarkdown"][:240]} for source in req.records if source["contentMarkdown"].strip()]})
-    return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": []}
+    return {"runId": req.runId, "status": "SUCCEEDED", "proposals": proposals, "warnings": [], "recordSummary": record_summary}

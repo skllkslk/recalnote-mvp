@@ -78,11 +78,17 @@ class AgentSessionRecordsTest {
     private static class TestAgent implements AutoCloseable {
         final HttpServer server;
         final AtomicReference<String> received=new AtomicReference<>();
+        final AtomicReference<String> generation=new AtomicReference<>();
         TestAgent() throws Exception {
             server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
             server.createContext("/internal/v1/agent-sessions/interpret",exchange -> {
                 received.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
                 byte[] response="{\"state\":\"NEEDS_INPUT\",\"cards\":[]}".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,response.length); exchange.getResponseBody().write(response); exchange.close();
+            });
+            server.createContext("/internal/v1/quest-proposals/generate",exchange -> {
+                generation.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
+                byte[] response="{\"proposals\":[],\"recordSummary\":\"Key facts\"}".getBytes(StandardCharsets.UTF_8);
                 exchange.sendResponseHeaders(200,response.length); exchange.getResponseBody().write(response); exchange.close();
             });
             server.start();
@@ -109,32 +115,44 @@ class AgentSessionRecordsTest {
         }
     }
 
-    @Test void supplementationKeepsOriginalAndReplacementExplicitlyResetsSources() throws Exception {
-        for(String cardId:List.of("additional-context","replacement-context")) {
-            UUID sessionId=UUID.randomUUID(), original=UUID.randomUUID();
+    @Test void roleAndSupplementationGenerateImmediatelyWhileReplacementResetsSources() throws Exception {
+        for(String cardId:List.of("role","additional-context","replacement-context")) {
+            UUID sessionId=UUID.randomUUID(), original=UUID.randomUUID(), epicId=UUID.randomUUID(), proposalId=UUID.randomUUID();
             var mapper=new ObjectMapper();
-            String context=mapper.writeValueAsString(Map.of("recordIds",List.of(original.toString()),"candidateRecordIds",List.of(original.toString()),"answers",Map.of("role","debug","facts-check","edit")));
-            String cards=mapper.writeValueAsString(List.of(Map.of("id",cardId)));
+            String context=mapper.writeValueAsString(Map.of("recordIds",List.of(original.toString()),"candidateRecordIds",List.of(original.toString()),"answers",
+                    cardId.equals("role")?Map.of():Map.of("role","debug","facts-check","edit")));
+            String cards=mapper.writeValueAsString(List.of(Map.of("id",cardId,"options",List.of())));
             when(db.queryForList(contains("FOR UPDATE"),eq(sessionId),eq("owner"))).thenReturn(List.of(Map.of("id",sessionId)));
             when(db.queryForMap(contains("FROM agent_session"),eq(sessionId),eq("owner")))
                 .thenReturn(new HashMap<>(Map.of("id",sessionId,"state","NEEDS_INPUT","useCase","CAREER","context",context,"cards",cards)));
             when(db.queryForList(contains("FROM epic WHERE"),eq("owner"),eq("CAREER")))
-                .thenReturn(List.of(Map.of("id",UUID.randomUUID(),"title","Career")));
+                .thenReturn(List.of(Map.of("id",epicId,"title","Career")));
+            when(db.queryForMap(contains("FROM epic WHERE"),eq(epicId),eq("owner")))
+                .thenReturn(Map.of("title","Career","completion_criteria","Draft","use_case","CAREER"));
+            when(db.queryForList(contains("FROM quest_proposal WHERE run_id"),any(UUID.class)))
+                .thenReturn(List.of(new HashMap<>(Map.of("id",proposalId,"title","Draft","steps","[]"))));
             when(db.queryForMap(contains("FROM record WHERE"),any(UUID.class),eq("owner")))
                 .thenAnswer(call -> Map.of("id",call.getArgument(1),"title","Record","contentMarkdown","Content","version",1));
             try(var agent=new TestAgent()) {
                 new ApiController(db,agent.url(),"key","unused").agentTurn(sessionId,Map.of("cardId",cardId,"value","Corrected facts"));
                 var saved=org.mockito.ArgumentCaptor.forClass(String.class);
-                verify(db).update(startsWith("UPDATE agent_session SET state=?,context_json="),eq("NEEDS_INPUT"),saved.capture(),anyString(),eq(sessionId),eq("owner"));
+                if(!cardId.equals("replacement-context")) {
+                    var review=org.mockito.ArgumentCaptor.forClass(String.class);
+                    verify(db).update(startsWith("UPDATE agent_session SET state='PROPOSAL_PENDING'"),saved.capture(),eq(proposalId),review.capture(),eq(sessionId),eq("owner"));
+                    assertEquals("Key facts",mapper.readTree(review.getValue()).get(0).get("recordSummary").asText());
+                } else {
+                    verify(db).update(startsWith("UPDATE agent_session SET state=?,context_json="),eq("NEEDS_INPUT"),saved.capture(),anyString(),eq(sessionId),eq("owner"));
+                }
                 var stored=mapper.readTree(saved.getValue());
                 assertFalse(stored.get("answers").has("facts-check"));
                 assertFalse(stored.get("answers").has("source-check"));
-                if(cardId.equals("additional-context")) {
-                    assertEquals(2,stored.get("recordIds").size());
+                if(!cardId.equals("replacement-context")) {
+                    int recordCount=cardId.equals("additional-context")?2:1;
+                    assertEquals(recordCount,stored.get("recordIds").size());
                     assertEquals(original.toString(),stored.get("recordIds").get(0).asText());
                     assertEquals(original.toString(),stored.get("candidateRecordIds").get(0).asText());
                     assertTrue(stored.get("answers").has("role"));
-                    assertEquals(1,mapper.readTree(agent.received.get()).get("supplementRecords").size());
+                    assertEquals(recordCount,mapper.readTree(agent.generation.get()).get("records").size());
                 } else {
                     assertEquals(1,stored.get("recordIds").size());
                     assertNotEquals(original.toString(),stored.get("recordIds").get(0).asText());

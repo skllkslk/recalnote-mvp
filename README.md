@@ -8,8 +8,8 @@ RecallNote는 프로젝트 경험과 학습 기록을 모아, 원본 근거를 �
 | --- | --- |
 | 프로필과 Epic | 목표에 따라 CAREER 또는 LEARNING Epic을 선택합니다. Epic은 결과물의 방향과 완료 기준을 담습니다. |
 | 내 경험 | 기록을 직접 작성하거나 Markdown 파일과 Notion 내보내기 ZIP에서 가져옵니다. 검색, 트랙별 필터, 원본 상세 보기, 수정과 삭제를 지원합니다. 추천 트랙은 제목·본문·Notion 경로를 바탕으로 계산합니다. |
-| NPC 대화 | 저장된 기록을 최대 20개 선택하거나 새 경험을 입력합니다. 여러 기록을 선택하면 이번에 사용할 범위를 확인하고, 역할 또는 학습 수준과 사실·근거를 확인한 뒤 초안을 생성합니다. 진행 중인 세션은 새로고침 후 이어갈 수 있습니다. |
-| 결과 검토와 퀘스트 | Markdown 초안과 근거 발췌를 함께 확인합니다. 결과를 편집하고 승인하면 퀘스트로 저장되며, 거절하면 제안 상태가 변경됩니다. |
+| NPC 대화 | 저장된 기록을 최대 20개 선택하거나 새 경험을 입력합니다. 여러 기록을 선택하면 이번에 사용할 범위를 고릅니다. 역할 또는 학습 수준에 답하면 초안이 생성됩니다. 진행 중인 세션은 새로고침 후 이어갈 수 있습니다. |
+| 결과 검토와 퀘스트 | Markdown 초안과 원본 기록 요약, 근거 발췌를 함께 확인합니다. 결과를 편집하고 저장하면 퀘스트가 생성되며, 거절하면 제안 상태가 변경됩니다. |
 | 작성 도구와 학습 화면 | 작성 스튜디오에서 저장된 퀘스트와 원본을 바탕으로 템플릿 초안을 만들고 복사하거나 Markdown으로 내려받을 수 있습니다. 학습 노트와 기억 지도에서 기록과 퀘스트를 살펴볼 수 있습니다. |
 | 로그인 | 운영 환경은 Google OIDC 로그인, PostgreSQL 기반 세션, 사용자별 데이터 접근 제어를 사용합니다. |
 
@@ -49,7 +49,7 @@ sequenceDiagram
     Core->>DB: 세션 저장, 원본 조회
     loop 생성 조건 확인까지
         Core->>Agent: 후보 기록과 현재 답변 전달
-        Agent-->>Core: 범위, 역할·수준, 사실 또는 근거 카드
+        Agent-->>Core: 범위 선택 또는 역할·수준 질문
         Core-->>Web: 카드 표시용 세션 반환
         User->>Web: 카드 응답
         Web->>Core: 답변 제출
@@ -79,8 +79,8 @@ sequenceDiagram
 `POST /internal/v1/agent-sessions/interpret`는 후보 기록, 보충 기록, 현재 답변을 받아 다음 카드를 규칙으로 구성합니다.
 
 - 후보 기록이 여러 개면 명시된 `project:` 태그 또는 본문의 프로젝트명으로 묶습니다. 프로젝트 정보가 없는 기록은 개별 후보로 제시합니다. 여러 묶음이 있으면 선택한 전체 기록을 사용할 수도 있습니다.
-- CAREER는 담당 역할, LEARNING은 현재 학습 수준을 묻습니다. 이어서 사실과 근거를 확인합니다.
-- 보충이나 정정을 선택하면 기존 원본과 추가 기록을 함께 사용하고 사실·근거를 다시 확인합니다. 명시적으로 교체하면 이번 세션의 대상만 새 기록으로 바뀝니다.
+- CAREER는 담당 역할, LEARNING은 현재 학습 수준을 묻습니다. 응답하면 초안을 생성하고 최종 검토 화면에서 사실과 근거를 확인할 수 있습니다.
+- 입력할 때 선택한 원본 기록에 보충 설명을 추가할 수 있습니다.
 
 ### 2. 확인된 입력으로 초안 생성
 
@@ -130,10 +130,6 @@ curl -X POST http://localhost:8080/api/v1/agent-sessions -H 'Content-Type: appli
   -d '{"useCase":"CAREER","recordIds":["<record-id>"]}'
 curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
   -H 'Content-Type: application/json' -d '{"cardId":"role","value":"debug"}'
-curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
-  -H 'Content-Type: application/json' -d '{"cardId":"facts-check","value":"confirm"}'
-curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/turns \
-  -H 'Content-Type: application/json' -d '{"cardId":"source-check","value":"confirm"}'
 # Review the generated result before approving it:
 curl -X POST http://localhost:8080/api/v1/agent-sessions/<session-id>/approve
 curl http://localhost:8080/api/v1/quests

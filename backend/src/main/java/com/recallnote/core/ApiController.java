@@ -137,7 +137,7 @@ public class ApiController {
             Map<String,Object> supplements=parseObject(context.get("supplementsByTarget"));
             for(Object extra:(List<?>)supplements.getOrDefault(value,List.of())) if(!targetIds.contains(extra.toString())) targetIds.add(extra.toString());
             context.put("recordIds",targetIds);
-            answers=new LinkedHashMap<>(); // A new target requires new role/fact/evidence confirmation.
+            answers=new LinkedHashMap<>(); // Ask for the role or learning level for the new target.
         }
         answers.put(cardId,value);
         if(Set.of("additional-context","replacement-context").contains(cardId)) {
@@ -161,24 +161,26 @@ public class ApiController {
             answers.remove("source-check");
             answers.remove("facts-check");
         }
-        context.put("answers",answers);
         String selectedUseCase=normalizedUseCase(session.get("useCase"));
         Map<String,Object> activeEpic=activeEpic(selectedUseCase);
-        boolean ready=answers.containsKey("role") || answers.containsKey("learning-level");
-        ready=ready && "confirm".equals(answers.get("facts-check")) && "confirm".equals(answers.get("source-check"));
+        boolean requestsLegacyEdit=("facts-check".equals(cardId) || "source-check".equals(cardId)) && !"confirm".equals(value);
+        boolean ready=answers.containsKey("LEARNING".equals(selectedUseCase)?"learning-level":"role") && !requestsLegacyEdit;
         // Resumed multi-record sessions must also pass the new target-selection step.
         ready=ready && (((List<?>)context.getOrDefault("candidateRecordIds",context.getOrDefault("recordIds",List.of()))).size()<=1 || answers.containsKey("project-selection"));
+        context.put("answers",answers);
         if(ready) {
+            answers.remove("facts-check");
+            answers.remove("source-check");
             Map<String,Object> proposalResult=generateForContext(Map.of("epicId",Objects.toString(activeEpic.get("id"))),context);
             List<?> proposals=(List<?>)proposalResult.getOrDefault("proposals",List.of());
             if(!proposals.isEmpty()) {
                 Map<?,?> proposal=(Map<?,?>)proposals.get(0);
                 UUID proposalId=UUID.fromString(proposal.get("id").toString());
-                db.update("UPDATE agent_session SET state='PROPOSAL_PENDING',context_json=?::jsonb,proposal_id=?,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",json(context),proposalId,json(List.of(Map.of("type","PROPOSAL","id","proposal","title",proposal.get("title"),"value",proposal))),id,userId());
+                Map<String,Object> reviewCard=Map.of("type","PROPOSAL","id","proposal","title",proposal.get("title"),
+                        "value",proposal,"recordSummary",proposalResult.get("recordSummary"));
+                db.update("UPDATE agent_session SET state='PROPOSAL_PENDING',context_json=?::jsonb,proposal_id=?,pending_cards_json=?::jsonb,updated_at=now() WHERE id=? AND user_id=?",json(context),proposalId,json(List.of(reviewCard)),id,userId());
                 return sessionResponse(id);
             }
-            // A successful HTTP response can still contain no usable proposals.
-            // Do not send the user back to the same evidence confirmation card.
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "No usable proposal was generated; retry generation");
         }
@@ -262,7 +264,8 @@ public class ApiController {
                 }
             }
             db.update("UPDATE agent_run SET status='SUCCEEDED' WHERE id=?",runId);
-            return Map.of("runId",runId,"status","SUCCEEDED","proposals",proposalRows("run_id",runId));
+            return Map.of("runId",runId,"status","SUCCEEDED","proposals",proposalRows("run_id",runId),
+                    "recordSummary",Objects.toString(response.get("recordSummary"),""));
         } catch(Exception ex) {
             db.update("UPDATE agent_run SET status='FAILED',error_code=? WHERE id=?",ex.getClass().getSimpleName(),runId);
             if(ex instanceof ResponseStatusException responseError) throw responseError;
